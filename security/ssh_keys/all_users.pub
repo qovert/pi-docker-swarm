@@ -1,0 +1,4 @@
+# All Users SSH Keys (for bastion host)
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJsoicQ9jcNcuASiF6JJeFGCh9sMuyPmLBhbR+ErgaUP brian@harkreader.me
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB4NOyXcZokznpgSQDFKllDGsMw0x91u5cinB41noJkZ ditto@maladi.hrkrdr.lan
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH6BexQrpPYCL2nQJI+qJAevFbxLyorN380l1cNbKbsP ditto@acina

@@ -1,0 +1,168 @@
+---
+# Advanced playbook for managing SSH keys with additional features
+- name: Advanced SSH Key Management
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    ssh_keys_dir: "{{ playbook_dir }}/ssh_keys"
+    ssh_dir: "/home/{{ ansible_user }}/.ssh"
+    authorized_keys_file: "{{ ssh_dir }}/authorized_keys"
+    
+    # Advanced configuration options
+    remove_unauthorized_keys: false  # Set to true to remove keys not in the configuration
+    create_backup: true
+    key_options: ""  # SSH key options like "no-port-forwarding,no-agent-forwarding"
+    
+    # Environment-specific key mappings
+    ssh_keys_by_function:
+      web:
+        required:
+          - "{{ ssh_keys_dir }}/admin_team.pub"
+          - "{{ ssh_keys_dir }}/web_team.pub"
+        optional:
+          - "{{ ssh_keys_dir }}/monitoring.pub"
+      
+      database:
+        required:
+          - "{{ ssh_keys_dir }}/admin_team.pub"
+          - "{{ ssh_keys_dir }}/dba_team.pub"
+        optional:
+          - "{{ ssh_keys_dir }}/backup_service.pub"
+          - "{{ ssh_keys_dir }}/monitoring.pub"
+      
+      application:
+        required:
+          - "{{ ssh_keys_dir }}/admin_team.pub"
+          - "{{ ssh_keys_dir }}/dev_team.pub"
+        optional:
+          - "{{ ssh_keys_dir }}/deploy_service.pub"
+          - "{{ ssh_keys_dir }}/monitoring.pub"
+      
+      monitoring:
+        required:
+          - "{{ ssh_keys_dir }}/admin_team.pub"
+          - "{{ ssh_keys_dir }}/monitoring_team.pub"
+        optional:
+          - "{{ ssh_keys_dir }}/monitoring.pub"
+      
+      bastion:
+        required:
+          - "{{ ssh_keys_dir }}/admin_team.pub"
+        optional:
+          - "{{ ssh_keys_dir }}/all_users.pub"
+
+      cluster:
+        required:
+          - "{{ ssh_keys_dir }}/all_users.pub"
+          - "{{ ssh_keys_dir }}/cluster_nodes.pub"
+        optional: []
+
+  tasks:
+    - name: Validate host function is defined
+      fail:
+        msg: "host_function must be defined for {{ inventory_hostname }}"
+      when: host_function is not defined
+
+    - name: Validate SSH keys directory exists locally
+      stat:
+        path: "{{ ssh_keys_dir }}"
+      delegate_to: localhost
+      register: ssh_keys_dir_stat
+      run_once: true
+
+    - name: Fail if SSH keys directory doesn't exist
+      fail:
+        msg: "SSH keys directory {{ ssh_keys_dir }} does not exist"
+      when: not ssh_keys_dir_stat.stat.exists
+      run_once: true
+
+    - name: Ensure SSH directory exists
+      file:
+        path: "{{ ssh_dir }}"
+        state: directory
+        mode: '0700'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Create backup of existing authorized_keys
+      copy:
+        src: "{{ authorized_keys_file }}"
+        dest: "{{ authorized_keys_file }}.backup.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        mode: '0600'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      when: 
+        - create_backup | bool
+        - authorized_keys_file is exists
+
+    - name: Read required SSH public keys
+      set_fact:
+        required_keys: "{{ required_keys | default([]) + [lookup('file', item)] }}"
+      loop: "{{ ssh_keys_by_function[host_function]['required'] | default([]) }}"
+      delegate_to: localhost
+
+    - name: Read optional SSH public keys
+      set_fact:
+        optional_keys: "{{ optional_keys | default([]) + [lookup('file', item)] }}"
+      loop: "{{ ssh_keys_by_function[host_function]['optional'] | default([]) }}"
+      delegate_to: localhost
+      failed_when: false
+
+    - name: Combine all keys
+      set_fact:
+        all_keys: "{{ (required_keys | default([])) + (optional_keys | default([])) }}"
+
+    - name: Display key summary
+      debug:
+        msg: 
+          - "Host: {{ inventory_hostname }} ({{ host_function }})"
+          - "Required keys: {{ required_keys | default([]) | length }}"
+          - "Optional keys: {{ optional_keys | default([]) | length }}"
+          - "Total keys: {{ all_keys | length }}"
+
+    - name: Add required SSH public keys
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ item }}"
+        key_options: "{{ key_options }}"
+        comment: "Required key for {{ host_function }} - Added by Ansible"
+      loop: "{{ required_keys | default([]) }}"
+
+    - name: Add optional SSH public keys
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ item }}"
+        key_options: "{{ key_options }}"
+        comment: "Optional key for {{ host_function }} - Added by Ansible"
+      loop: "{{ optional_keys | default([]) }}"
+
+    - name: Remove unauthorized keys if enabled
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: absent
+        key: "{{ item }}"
+      loop: "{{ keys_to_remove | default([]) }}"
+      when: 
+        - remove_unauthorized_keys | bool
+        - keys_to_remove is defined
+
+    - name: Verify authorized_keys file permissions
+      file:
+        path: "{{ authorized_keys_file }}"
+        mode: '0600'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Generate summary report
+      debug:
+        msg: 
+          - "=== SSH Key Management Complete ==="
+          - "Host: {{ inventory_hostname }}"
+          - "Function: {{ host_function }}"
+          - "Keys added: {{ all_keys | length }}"
+          - "Backup created: {{ create_backup | bool }}"

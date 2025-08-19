@@ -1,0 +1,46 @@
+---
+- name: Quick Deploy/Update Monitoring Stack
+  hosts: manager_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    monitoring_stack_name: "monitoring"
+    monitoring_data_path: "/data/monitoring"
+    stack_file_path: "./stacks/monitoring-stack.yml"
+
+  tasks:
+    - name: Copy monitoring stack file to manager node
+      ansible.builtin.copy:
+        src: "{{ stack_file_path }}"
+        dest: "/tmp/monitoring-stack.yml"
+        mode: '0644'
+
+    - name: Deploy/Update monitoring stack
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/monitoring-stack.yml
+        {{ monitoring_stack_name }}
+      register: stack_deploy
+
+    - name: Display deployment result
+      ansible.builtin.debug:
+        msg:
+          - "========================================"
+          - "🚀 Monitoring Stack Deployment Complete!"
+          - "========================================"
+          - ""
+          - "📊 Access URLs:"
+          - "- Prometheus: http://{{ ansible_default_ipv4.address }}:9090"
+          - "- Grafana: http://{{ ansible_default_ipv4.address }}:3000"
+          - ""
+          - "🔑 Grafana Login:"
+          - "- Username: admin"
+          - "- Password: {{ grafana_admin_password | default('admin123') }}"
+          - ""
+          - "========================================"
+          - "💡 Next Steps:"
+          - "========================================"
+          - "- Check status: make monitoring-status"
+          - "- Validate setup: make validate-grafana-permissions"
+          - "- Browse to Grafana and explore the dashboards!"

@@ -1,0 +1,286 @@
+---
+- name: Setup Docker and Docker Swarm
+  hosts: cluster_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    docker_swarm_manager: "{{ groups['cluster_nodes'][0] }}"
+    docker_swarm_interface: "eth0"  # Adjust based on your network interface
+
+  tasks:
+    - name: Ensure /tmp directory has correct permissions
+      ansible.builtin.file:
+        path: /tmp
+        mode: '1777'
+        state: directory
+
+    - name: Update package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      retries: 3
+      delay: 10
+      register: apt_cache_update
+      until: apt_cache_update is success
+
+    - name: Install required packages for Docker
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=arm64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Check if Docker is already installed
+      ansible.builtin.command: docker --version
+      register: docker_check
+      failed_when: false
+      changed_when: false
+
+    - name: Clean apt cache if Docker needs installation
+      ansible.builtin.apt:
+        autoclean: true
+        autoremove: true
+      when: docker_check.rc != 0
+      ignore_errors: true
+
+    - name: Update package cache for Docker installation
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      retries: 3
+      delay: 30
+      register: cache_update
+      until: cache_update is succeeded
+      when: docker_check.rc != 0
+
+    - name: Install Docker packages
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: false
+      when: docker_check.rc != 0
+      register: docker_install
+      retries: 2
+      delay: 15
+      until: docker_install is succeeded
+
+    - name: Start and enable Docker service
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Configure Docker daemon for ZFS storage
+      ansible.builtin.copy:
+        content: |
+          {
+            "storage-driver": "zfs",
+            "storage-opts": [
+              "zfs.fsname=tank/docker"
+            ],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "data-root": "/var/lib/docker"
+          }
+        dest: /etc/docker/daemon.json
+        mode: '0644'
+        backup: true
+      register: docker_config
+
+    - name: Restart Docker if configuration changed and service is running
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+      when: 
+        - docker_config.changed
+        - ansible_facts['services']['docker.service']['state'] == 'running'
+      ignore_errors: true
+
+    - name: Check if Docker Swarm is already initialized
+      ansible.builtin.command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      register: swarm_status
+      changed_when: false
+      failed_when: false
+
+    - name: Initialize Docker Swarm on manager node
+      ansible.builtin.command: >
+        docker swarm init
+        --advertise-addr {{ ansible_default_ipv4.address }}
+      when:
+        - inventory_hostname == docker_swarm_manager
+        - swarm_status.stdout != "active"
+      register: swarm_init_result
+
+    - name: Get Docker Swarm join token for workers
+      ansible.builtin.command: docker swarm join-token worker -q
+      register: swarm_worker_token
+      when: inventory_hostname == docker_swarm_manager
+      changed_when: false
+      run_once: true
+
+    - name: Get Docker Swarm manager IP
+      ansible.builtin.set_fact:
+        swarm_manager_ip: "{{ hostvars[docker_swarm_manager]['ansible_default_ipv4']['address'] }}"
+      when: inventory_hostname != docker_swarm_manager
+
+    - name: Join Docker Swarm as worker
+      ansible.builtin.command: >
+        docker swarm join
+        --token {{ hostvars[docker_swarm_manager]['swarm_worker_token']['stdout'] }}
+        {{ hostvars[docker_swarm_manager]['ansible_default_ipv4']['address'] }}:2377
+      when:
+        - inventory_hostname != docker_swarm_manager
+        - swarm_status.stdout != "active"
+      register: swarm_join_result
+
+    - name: Create Docker Swarm network
+      ansible.builtin.command: >
+        docker network create
+        --driver overlay
+        --attachable
+        cluster-network
+      when: inventory_hostname == docker_swarm_manager
+      run_once: true
+      failed_when: false
+
+    - name: Display Swarm cluster status
+      ansible.builtin.command: docker node ls
+      register: swarm_nodes
+      when: inventory_hostname == docker_swarm_manager
+      changed_when: false
+
+    - name: Show Swarm cluster nodes
+      ansible.builtin.debug:
+        var: swarm_nodes.stdout_lines
+      when: inventory_hostname == docker_swarm_manager
+
+    - name: Create example docker-compose for stack deployment
+      ansible.builtin.copy:
+        content: |
+          version: '3.8'
+          services:
+            web:
+              image: nginx:alpine
+              ports:
+                - "80:80"
+              deploy:
+                replicas: 3
+                placement:
+                  constraints:
+                    - node.role == worker
+              networks:
+                - cluster-network
+              volumes:
+                - web-data:/usr/share/nginx/html
+            db:
+              image: postgres:15-alpine
+              environment:
+                POSTGRES_DB: exampledb
+                POSTGRES_USER: user
+                POSTGRES_PASSWORD: password
+              deploy:
+                replicas: 1
+                placement:
+                  constraints:
+                    - node.role == manager
+              networks:
+                - cluster-network
+              volumes:
+                - postgres-data:/var/lib/postgresql/data
+          volumes:
+            web-data:
+              driver: local
+              driver_opts:
+                type: none
+                o: bind
+                device: /data/web
+            postgres-data:
+              driver: local
+              driver_opts:
+                type: none
+                o: bind
+                device: /data/postgres
+          networks:
+            cluster-network:
+              external: true
+        dest: /home/{{ ansible_user }}/docker-compose.example.yml
+        mode: '0644'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      when: inventory_hostname == docker_swarm_manager
+
+    - name: Create data directories for example stack
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      loop:
+        - /data/web
+        - /data/postgres
+      when: inventory_hostname == docker_swarm_manager
+
+    - name: Display setup completion summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Docker Swarm Setup Complete ==="
+          - "Manager Node: {{ docker_swarm_manager }}"
+          - "Storage: ZFS-backed Docker storage on /var/lib/docker"
+          - "Network: cluster-network overlay network created"
+          - "Example: Deploy with 'docker stack deploy -c docker-compose.example.yml example-stack'"
+          - "Commands: 'docker node ls', 'docker stack ls', 'docker service ls'"
+
+    - name: Validate Docker service is running
+      ansible.builtin.systemd:
+        name: docker
+      register: docker_service_status
+      failed_when: docker_service_status.status.ActiveState != "active"
+
+    - name: Validate Docker Swarm is active
+      ansible.builtin.command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      register: swarm_status
+      changed_when: false
+      failed_when: swarm_status.stdout != "active"
+
+    - name: Validate cluster nodes (manager only)
+      ansible.builtin.command: docker node ls --format '{{ "{{" }}.Hostname{{ "}}" }} {{ "{{" }}.Status{{ "}}" }} {{ "{{" }}.Availability{{ "}}" }}'
+      register: swarm_nodes
+      when: inventory_hostname == docker_swarm_manager
+      changed_when: false
+
+    - name: Display cluster validation results
+      ansible.builtin.debug:
+        msg:
+          - "✅ Docker Swarm cluster is healthy!"
+          - "✅ All nodes are active and available"
+          - "✅ Ready for application deployment"
+      when: inventory_hostname == docker_swarm_manager

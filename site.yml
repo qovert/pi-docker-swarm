@@ -1,0 +1,23 @@
+---
+# Master site playbook for Raspberry Pi 5 Cluster
+# This orchestrates the complete cluster setup in the correct order
+
+- name: "Phase 1: Security Setup"
+  import_playbook: security/populate_authorized_keys.yml
+  tags: [security, ssh-keys]
+
+- name: "Phase 2: Infrastructure Setup"
+  import_playbook: infrastructure/configure_storage.yml
+  tags: [infrastructure, storage, zfs]
+
+- name: "Phase 3: Container Platform Setup"
+  import_playbook: container-platform/setup_docker_swarm.yml
+  tags: [container-platform, docker, swarm]
+
+- name: "Phase 4: Application Deployment"
+  import_playbook: applications/deploy_portainer.yml
+  tags: [applications, portainer]
+
+- name: "Phase 5: Monitoring Deployment"
+  import_playbook: applications/deploy_monitoring.yml
+  tags: [applications, monitoring]

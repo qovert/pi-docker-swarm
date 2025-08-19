@@ -1,0 +1,60 @@
+---
+# Playbook to remove specific SSH keys from authorized_keys files
+- name: Remove SSH keys from authorized_keys
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    ssh_dir: "/home/{{ ansible_user }}/.ssh"
+    authorized_keys_file: "{{ ssh_dir }}/authorized_keys"
+    
+    # Keys to remove (specify as list of public key content)
+    keys_to_remove: []
+    
+    # Or specify key files to remove
+    key_files_to_remove: []
+
+  tasks:
+    - name: Validate that keys to remove are specified
+      fail:
+        msg: "Please specify either keys_to_remove or key_files_to_remove"
+      when: 
+        - (keys_to_remove | length) == 0
+        - (key_files_to_remove | length) == 0
+
+    - name: Create backup before removing keys
+      copy:
+        src: "{{ authorized_keys_file }}"
+        dest: "{{ authorized_keys_file }}.backup.before_removal.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        mode: '0600'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      when: authorized_keys_file is exists
+
+    - name: Read keys from files to remove
+      set_fact:
+        file_based_keys: "{{ file_based_keys | default([]) + [lookup('file', item)] }}"
+      loop: "{{ key_files_to_remove }}"
+      delegate_to: localhost
+      when: key_files_to_remove | length > 0
+
+    - name: Combine all keys to remove
+      set_fact:
+        all_keys_to_remove: "{{ keys_to_remove + (file_based_keys | default([])) }}"
+
+    - name: Remove specified SSH keys
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: absent
+        key: "{{ item }}"
+      loop: "{{ all_keys_to_remove }}"
+      register: key_removal_result
+
+    - name: Display removal summary
+      debug:
+        msg: 
+          - "Host: {{ inventory_hostname }}"
+          - "Keys removed: {{ all_keys_to_remove | length }}"
+          - "Backup created: {{ authorized_keys_file }}.backup.before_removal.{{ ansible_date_time.epoch }}"

@@ -1,0 +1,4 @@
+# Admin Team SSH Keys
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7vbqajDhA... admin1@company.com
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDM8yF2cN... admin2@company.com
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC9xJ4kL... admin3@company.com

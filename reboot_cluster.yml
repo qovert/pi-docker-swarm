@@ -1,0 +1,118 @@
+---
+- name: Reboot Cluster Nodes After Storage Configuration
+  hosts: cluster_nodes
+  become: true
+  gather_facts: false
+  serial: 1  # Reboot one node at a time to maintain cluster availability
+
+  vars:
+    reboot_timeout: 300
+    post_reboot_delay: 60
+
+  tasks:
+    - name: Check if system needs reboot (kernel update check)
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Check if kernel restart is needed using needrestart
+      ansible.builtin.command: needrestart -r l -k
+      register: needrestart_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set reboot needed fact
+      ansible.builtin.set_fact:
+        needs_reboot: "{{ reboot_required_file.stat.exists or (needrestart_check.rc != 0) }}"
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} {{ 'needs reboot' if needs_reboot else 'does not need reboot' }}"
+
+    - name: Skip reboot if not needed
+      ansible.builtin.debug:
+        msg: "Skipping reboot for {{ inventory_hostname }} - no reboot required"
+      when: not needs_reboot
+
+    - name: Flush all handlers before reboot
+      ansible.builtin.meta: flush_handlers
+      when: needs_reboot
+
+    - name: Announce reboot
+      ansible.builtin.debug:
+        msg: "Rebooting {{ inventory_hostname }} to finalize storage changes..."
+      when: needs_reboot
+
+    - name: Reboot the machine
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        connect_timeout: 60
+        pre_reboot_delay: 10
+        post_reboot_delay: "{{ post_reboot_delay }}"
+        msg: "Ansible reboot for storage configuration finalization"
+      when: needs_reboot
+
+    - name: Wait for system to come back online
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 60
+        sleep: 5
+        delay: 5
+        timeout: "{{ reboot_timeout }}"
+      when: needs_reboot
+
+    - name: Gather facts after reboot
+      ansible.builtin.setup:
+
+    - name: Verify ZFS is loaded
+      ansible.builtin.shell: lsmod | grep zfs
+      register: zfs_module_check
+      changed_when: false
+      failed_when: false
+
+    - name: Load ZFS module if not loaded
+      ansible.builtin.modprobe:
+        name: zfs
+        state: present
+      when: zfs_module_check.rc != 0
+
+    - name: Verify ZFS pool is imported
+      ansible.builtin.command: zpool status tank
+      register: zpool_import_check
+      changed_when: false
+      failed_when: false
+
+    - name: Import ZFS pool if needed
+      ansible.builtin.command: zpool import tank
+      when: zpool_import_check.rc != 0
+      register: zpool_import_result
+
+    - name: Verify ZFS datasets are mounted
+      ansible.builtin.command: zfs mount -a
+      register: zfs_mount_result
+      changed_when: false
+      failed_when: false
+
+    - name: Check swap status
+      ansible.builtin.command: swapon --show
+      register: swap_check
+      changed_when: false
+
+    - name: Enable swap if not active
+      ansible.builtin.command: swapon /swap-storage/swapfile
+      when: "'/swap-storage/swapfile' not in swap_check.stdout"
+      failed_when: false
+
+    - name: Display post-reboot status
+      ansible.builtin.debug:
+        msg:
+          - "=== Post-Reboot Status for {{ inventory_hostname }} ==="
+          - "ZFS Module: {{ 'Loaded' if zfs_module_check.rc == 0 else 'NOT LOADED' }}"
+          - "ZFS Pool: {{ 'Available' if zpool_import_check.rc == 0 else 'Imported' if zpool_import_result is defined else 'CHECK REQUIRED' }}"
+          - "Swap: {{ 'Active' if '/swap-storage/swapfile' in swap_check.stdout else 'Activated' }}"
+          - "System ready for k3s deployment"
+
+    - name: Pause between node reboots
+      ansible.builtin.pause:
+        seconds: 30
+        prompt: "Waiting 30 seconds before proceeding to next node..."
+      when: needs_reboot and inventory_hostname != ansible_play_hosts[-1]

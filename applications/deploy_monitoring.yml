@@ -1,0 +1,254 @@
+---
+- name: Deploy Monitoring Stack (Prometheus, Grafana) to Docker Swarm
+  hosts: manager_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_file_path: "./stacks/monitoring-stack.yml.j2"
+    prometheus_config_path: "./config/prometheus.yml"
+    prometheus_rules_path: "./config/prometheus-rules.yml"
+    grafana_datasources_config_path: "./config/grafana-datasources.yml"
+    grafana_dashboards_config_path: "./config/grafana-dashboards.yml"
+    grafana_dashboard_path: "./config/pi-swarm-dashboard.json"
+
+  tasks:
+    - name: Ensure monitoring data directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop:
+        - "{{ monitoring_data_path }}"
+        - "{{ monitoring_data_path }}/prometheus"
+        - "{{ monitoring_data_path }}/prometheus-config"
+        - "{{ monitoring_data_path }}/prometheus-config/rules"
+        - "{{ monitoring_data_path }}/grafana-config"
+        - "{{ monitoring_data_path }}/grafana-config/provisioning"
+        - "{{ monitoring_data_path }}/grafana-config/provisioning/datasources"
+        - "{{ monitoring_data_path }}/grafana-config/provisioning/dashboards"
+        - "{{ monitoring_data_path }}/grafana-dashboards"
+
+    - name: Create Grafana data directory with proper ownership
+      ansible.builtin.file:
+        path: "{{ monitoring_data_path }}/grafana"
+        state: directory
+        mode: '0755'
+        owner: '472'
+        group: '0'
+        recurse: yes
+
+    - name: Create Grafana subdirectories with proper ownership
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: '472'
+        group: '0'
+      loop:
+        - "{{ monitoring_data_path }}/grafana/plugins"
+        - "{{ monitoring_data_path }}/grafana/dashboards"
+        - "{{ monitoring_data_path }}/grafana/csv"
+        - "{{ monitoring_data_path }}/grafana/png"
+        - "{{ monitoring_data_path }}/grafana/sessions"
+        - "{{ monitoring_data_path }}/grafana-dashboards"
+        - "{{ monitoring_data_path }}/grafana/dashboards"
+
+    - name: Ensure Grafana dashboard directory has correct permissions
+      ansible.builtin.file:
+        path: "{{ monitoring_data_path }}/grafana-dashboards"
+        state: directory
+        mode: '0755'
+        owner: '472'
+        group: '0'
+        recurse: yes
+
+    - name: Check if Docker Swarm is active
+      ansible.builtin.command: docker info --format '{{ "{{.Swarm.LocalNodeState}}" }}'
+      register: swarm_status
+      changed_when: false
+
+    - name: Verify Swarm is active
+      ansible.builtin.assert:
+        that:
+          - swarm_status.stdout == "active"
+        fail_msg: "Docker Swarm is not active on this node"
+        success_msg: "Docker Swarm is active"
+
+    - name: Generate monitoring stack file with variables
+      ansible.builtin.template:
+        src: "{{ stack_file_path }}"
+        dest: "/tmp/monitoring-stack.yml"
+        mode: '0644'
+
+    - name: Copy Prometheus configuration to manager node
+      ansible.builtin.copy:
+        src: "{{ prometheus_config_path }}"
+        dest: "{{ monitoring_data_path }}/prometheus-config/prometheus.yml"
+        mode: '0644'
+
+    - name: Copy Prometheus rules to manager node
+      ansible.builtin.copy:
+        src: "{{ prometheus_rules_path }}"
+        dest: "{{ monitoring_data_path }}/prometheus-config/rules/prometheus-rules.yml"
+        mode: '0644'
+
+    - name: Copy Grafana datasources configuration
+      ansible.builtin.copy:
+        src: "{{ grafana_datasources_config_path }}"
+        dest: "{{ monitoring_data_path }}/grafana-config/provisioning/datasources/datasources.yml"
+        mode: '0644'
+      notify: restart monitoring stack
+
+    - name: Copy Grafana dashboards configuration
+      ansible.builtin.copy:
+        src: "{{ grafana_dashboards_config_path }}"
+        dest: "{{ monitoring_data_path }}/grafana-config/provisioning/dashboards/dashboards.yml"
+        mode: '0644'
+      notify: restart monitoring stack
+
+    - name: Copy Pi Swarm dashboard
+      ansible.builtin.copy:
+        src: "{{ grafana_dashboard_path }}"
+        dest: "{{ monitoring_data_path }}/grafana-dashboards/pi-swarm-dashboard.json"
+        mode: '0644'
+        owner: '472'
+        group: '0'
+
+    - name: Create Grafana configuration file
+      ansible.builtin.copy:
+        content: |
+          [paths]
+          data = /var/lib/grafana
+          logs = /var/log/grafana
+          plugins = /var/lib/grafana/plugins
+          provisioning = /etc/grafana/provisioning
+
+          [server]
+          protocol = http
+          http_port = 3000
+          root_url = http://localhost:3000
+
+          [database]
+          type = sqlite3
+          path = grafana.db
+
+          [security]
+          admin_user = {{ grafana_admin_user }}
+          admin_password = {{ grafana_admin_password }}
+
+          [users]
+          allow_sign_up = false
+
+          [analytics]
+          reporting_enabled = false
+        dest: "{{ monitoring_data_path }}/grafana-config/grafana.ini"
+        mode: '0644'
+
+    - name: Deploy monitoring stack
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/monitoring-stack.yml
+        {{ monitoring_stack_name }}
+      register: stack_deploy
+
+    - name: Wait for monitoring services to be ready
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Check monitoring stack services
+      ansible.builtin.command: docker stack services {{ monitoring_stack_name }}
+      register: monitoring_services
+      changed_when: false
+
+    - name: Display monitoring services status
+      ansible.builtin.debug:
+        msg: "{{ monitoring_services.stdout_lines }}"
+
+    - name: Check Prometheus service status
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}:9090/-/healthy"
+        method: GET
+        status_code: 200
+      register: prometheus_health
+      retries: 5
+      delay: 10
+      until: prometheus_health.status == 200
+      ignore_errors: true
+
+    - name: Check Grafana service status
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}:3000/api/health"
+        method: GET
+        status_code: 200
+      register: grafana_health
+      retries: 5
+      delay: 10
+      until: grafana_health.status == 200
+      ignore_errors: true
+
+    - name: Display monitoring stack access information
+      ansible.builtin.debug:
+        msg:
+          - "========================================"
+          - "🎯 Monitoring Stack Deployed Successfully!"
+          - "========================================"
+          - ""
+          - "📊 Prometheus:"
+          - "  - URL: http://{{ ansible_default_ipv4.address }}:9090"
+          - "  - Status: {{ 'Healthy' if prometheus_health.status == 200 else 'Not responding' }}"
+          - ""
+          - "📈 Grafana:"
+          - "  - URL: http://{{ ansible_default_ipv4.address }}:3000"
+          - "  - Username: {{ grafana_admin_user }}"
+          - "  - Password: {{ grafana_admin_password }}"
+          - "  - Status: {{ 'Healthy' if grafana_health.status == 200 else 'Not responding' }}"
+          - ""
+          - "📡 Node Exporter: http://{{ ansible_default_ipv4.address }}:9100"
+          - "🐳 cAdvisor: http://{{ ansible_default_ipv4.address }}:8080"
+          - ""
+          - "========================================"
+          - "💡 Quick Start:"
+          - "========================================"
+          - "1. Access Grafana at http://{{ ansible_default_ipv4.address }}:3000"
+          - "2. Login with {{ grafana_admin_user }}/{{ grafana_admin_password }}"
+          - "3. Browse the 'Pi Docker Swarm Overview' dashboard"
+          - "4. Explore metrics from all cluster nodes"
+          - ""
+          - "💡 All services accessible from any node in your cluster"
+          - "💡 Grafana comes pre-configured with Prometheus datasource"
+
+    - name: Create monitoring status check script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          echo "🔍 Monitoring Stack Status Check"
+          echo "================================"
+          echo ""
+          
+          echo "📊 Stack Services:"
+          docker stack services monitoring
+          echo ""
+          
+          echo "🔗 Service Endpoints:"
+          NODE_IP=$(ip route get 1 | awk '{print $7; exit}')
+          echo "  Prometheus: http://$NODE_IP:9090"
+          echo "  Grafana:    http://$NODE_IP:3000 ({{ grafana_admin_user }}/{{ grafana_admin_password }})"
+          echo "  Node Export: http://$NODE_IP:9100"
+          echo "  cAdvisor:   http://$NODE_IP:8080"
+          echo ""
+          
+          echo "💊 Health Checks:"
+          curl -s -o /dev/null -w "  Prometheus: %{http_code}\n" http://$NODE_IP:9090/-/healthy
+          curl -s -o /dev/null -w "  Grafana:    %{http_code}\n" http://$NODE_IP:3000/api/health
+        dest: /usr/local/bin/monitoring-status
+        mode: '0755'
+
+  handlers:
+    - name: restart monitoring stack
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/monitoring-stack.yml
+        {{ monitoring_stack_name }}

@@ -1,0 +1,119 @@
+---
+- name: Discover Disk Configuration
+  hosts: cluster_nodes
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: List all block devices
+      command: lsblk -o NAME,SIZE,TYPE,MODEL,SERIAL
+      register: lsblk_output
+      changed_when: false
+
+    - name: Display block devices
+      debug:
+        msg:
+          - "=== Block Devices on {{ inventory_hostname }} ==="
+          - "{{ lsblk_output.stdout_lines }}"
+
+    - name: Get detailed disk information
+      shell: |
+        for disk in /dev/sd?; do
+          if [ -e "$disk" ]; then
+            echo "=== $disk ==="
+            echo "Size: $(lsblk -dno SIZE $disk)"
+            echo "Model: $(lsblk -dno MODEL $disk)"
+            echo "Serial: $(lsblk -dno SERIAL $disk 2>/dev/null || echo 'N/A')"
+            echo "Partitions:"
+            lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT $disk | grep -v "^$disk"
+            echo ""
+          fi
+        done
+      register: disk_details
+      changed_when: false
+
+    - name: Display detailed disk information
+      debug:
+        var: disk_details.stdout_lines
+
+    - name: Check for existing ZFS pools
+      command: zpool import
+      register: zpool_import
+      changed_when: false
+      failed_when: false
+
+    - name: Display available ZFS pools for import
+      debug:
+        var: zpool_import.stdout_lines
+      when: zpool_import.rc == 0 and zpool_import.stdout != ""
+
+    - name: Check current ZFS pools
+      command: zpool list
+      register: current_zpools
+      changed_when: false
+      failed_when: false
+
+    - name: Display current ZFS pools
+      debug:
+        var: current_zpools.stdout_lines
+      when: current_zpools.rc == 0
+
+    - name: Identify potential 512GB disks for RAIDZ1
+      shell: |
+        echo "Potential 512GB disks for RAIDZ1:"
+        lsblk -dno NAME,SIZE,TYPE | grep disk | awk '$2 ~ /^(4[5-9][0-9]|5[0-6][0-9]).*G$/ {print "/dev/"$1" ("$2")"}'
+      register: raidz1_candidates
+      changed_when: false
+
+    - name: Display RAIDZ1 candidates
+      debug:
+        var: raidz1_candidates.stdout_lines
+
+    - name: Identify potential 120GB disk for fast storage
+      shell: |
+        echo "Potential 120GB disk for fast storage:"
+        lsblk -dno NAME,SIZE,TYPE | grep disk | awk '$2 ~ /^(1[0-4][0-9]).*G$/ {print "/dev/"$1" ("$2")"}'
+      register: fast_storage_candidates
+      changed_when: false
+
+    - name: Display fast storage candidates
+      debug:
+        var: fast_storage_candidates.stdout_lines
+
+    - name: Check if devices are already in use
+      shell: |
+        echo "Checking device usage:"
+        for dev in /dev/sd?; do
+          if [ -e "$dev" ]; then
+            echo -n "$dev: "
+            if lsblk -no FSTYPE,MOUNTPOINT $dev | grep -q .; then
+              echo "IN USE - $(lsblk -no FSTYPE,MOUNTPOINT $dev | tr '\n' ' ')"
+            else
+              echo "AVAILABLE"
+            fi
+          fi
+        done
+      register: device_usage
+      changed_when: false
+
+    - name: Display device usage status
+      debug:
+        var: device_usage.stdout_lines
+
+    - name: Generate device recommendation
+      debug:
+        msg:
+          - "=== Device Recommendations for {{ inventory_hostname }} ==="
+          - "Based on the disk scan above, update the storage playbook variables:"
+          - ""
+          - "For 512GB RAIDZ1 disks, use devices showing ~512GB size"
+          - "For 120GB fast storage, use device showing ~120GB size"
+          - ""
+          - "Example configuration to add to your playbook:"
+          - "zfs_devices:"
+          - "  - /dev/sdb  # Replace with actual 512GB device"
+          - "  - /dev/sdc  # Replace with actual 512GB device"
+          - "  - /dev/sdd  # Replace with actual 512GB device"
+          - "  - /dev/sde  # Replace with actual 512GB device"
+          - ""
+          - "fast_disk_device: /dev/sda  # Replace with actual 120GB device"

@@ -1,0 +1,37 @@
+---
+# Production Ansible inventory for Raspberry Pi 5 Cluster
+all:
+  children:
+    bastion_hosts:
+      hosts:
+        ansible:
+          ansible_host: 172.16.30.172
+      vars:
+        host_function: bastion
+
+    manager_nodes:
+      hosts:
+        pistor0:
+          ansible_host: 172.16.30.127
+          swarm_role: manager
+      vars:
+        host_function: cluster
+
+    worker_nodes:
+      hosts:
+        pistor1:
+          ansible_host: 172.16.30.240
+          swarm_role: worker
+        pistor2:
+          ansible_host: 172.16.30.177
+          swarm_role: worker
+      vars:
+        host_function: cluster
+
+    cluster_nodes:
+      children:
+        manager_nodes:
+        worker_nodes:
+
+  vars:
+    ansible_user: ditto

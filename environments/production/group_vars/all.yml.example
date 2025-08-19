@@ -1,0 +1,78 @@
+---
+# Example configuration file for pi-docker-swarm deployment
+# Copy this file to all.yml and customize for your environment
+
+# ======================================
+# Authentication & Security
+# ======================================
+
+# Grafana admin credentials
+grafana_admin_user: admin
+grafana_admin_password: "ChangeMe123!"
+
+# ======================================
+# Network Configuration  
+# ======================================
+
+# Docker Swarm network interface (adjust for your network setup)
+docker_swarm_interface: eth0
+
+# ======================================
+# Storage Configuration
+# ======================================
+
+# ZFS pool name
+zfs_pool_name: tank
+
+# Data paths
+monitoring_data_path: "/data/monitoring"
+portainer_data_path: "/data/portainer"
+
+# ZFS devices for storage pool (adjust for your hardware)
+zfs_devices:
+  - /dev/sdb
+  - /dev/sdc 
+  - /dev/sdd
+  - /dev/sda
+
+# Fast disk for caching and logs (adjust for your hardware)
+fast_disk_device: /dev/sde
+
+# ======================================
+# Application Configuration
+# ======================================
+
+# Stack names
+monitoring_stack_name: monitoring
+portainer_stack_name: portainer
+
+# Service ports
+grafana_port: 3000
+prometheus_port: 9090
+portainer_http_port: 9000
+portainer_https_port: 9443
+
+# ======================================
+# SSH Key Management
+# ======================================
+
+# SSH keys directory (relative to playbook)
+ssh_keys_dir: "{{ playbook_dir }}/ssh_keys"
+
+# ======================================
+# Advanced Settings
+# ======================================
+
+# Docker daemon storage driver
+docker_storage_driver: zfs
+
+# Grafana configuration
+grafana_allow_sign_up: false
+grafana_reporting_enabled: false
+
+# Prometheus data retention
+prometheus_retention: 15d
+
+# Log rotation settings
+docker_log_max_size: "10m"
+docker_log_max_file: "3"

@@ -1,0 +1,424 @@
+---
+- name: Configure Storage on Raspberry Pi 5 Cluster Nodes
+  hosts: cluster_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    # ZFS configuration
+    zfs_pool_name: "tank"
+    zfs_datasets:
+      - name: "{{ zfs_pool_name }}/data"
+        mountpoint: "/data"
+        properties:
+          compression: "lz4"
+          atime: "off"
+      - name: "{{ zfs_pool_name }}/docker"
+        mountpoint: "/var/lib/docker"
+        properties:
+          compression: "lz4"
+          atime: "off"
+          recordsize: "16K"
+      - name: "{{ zfs_pool_name }}/swarm"
+        mountpoint: "/var/lib/docker/swarm"
+        properties:
+          compression: "lz4"
+          atime: "off"
+          recordsize: "8K"
+
+    # Fast disk configuration (120GB disk for write-heavy operations)
+    fast_disk_device: "/dev/sde"  # Adjust based on your actual device
+    fast_disk_partitions:
+      - number: 1
+        start: "1MiB"
+        end: "20GiB"
+        filesystem: "ext4"
+        mount_point: "/var/log"
+        label: "logs"
+      - number: 2
+        start: "20GiB"
+        end: "40GiB"
+        filesystem: "ext4"
+        mount_point: "/tmp"
+        label: "tmp"
+      - number: 3
+        start: "40GiB"
+        end: "70GiB"
+        filesystem: "ext4"
+        mount_point: "/var/cache"
+        label: "cache"
+      - number: 4
+        start: "70GiB"
+        end: "100%"
+        filesystem: "ext4"
+        mount_point: "/swap-storage"
+        label: "swap-storage"
+
+    # RAIDZ1 disk devices (512GB disks)
+    zfs_devices:
+      - "/dev/sdb"
+      - "/dev/sdc"
+      - "/dev/sdd"
+      - "/dev/sda"
+
+  tasks:
+    - name: Ensure /tmp directory has correct permissions
+      ansible.builtin.file:
+        path: /tmp
+        mode: '1777'
+        state: directory
+
+    - name: Update package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      retries: 3
+      delay: 10
+      register: apt_cache_update
+      until: apt_cache_update is success
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - zfsutils-linux
+          - parted
+          - gdisk
+          - smartmontools
+          - nvme-cli
+        state: present
+
+    - name: Load ZFS kernel module
+      community.general.modprobe:
+        name: zfs
+        state: present
+
+    - name: Ensure ZFS module loads on boot
+      ansible.builtin.lineinfile:
+        path: /etc/modules-load.d/zfs.conf
+        line: zfs
+        create: true
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: Check if ZFS devices exist and get their info
+      ansible.builtin.command: lsblk -n -o NAME,SIZE,TYPE {{ item }}
+      register: zfs_device_info
+      loop: "{{ zfs_devices }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Display ZFS device information
+      ansible.builtin.debug:
+        msg: "Device {{ item.item }}: {{ item.stdout if item.rc == 0 else 'Not found' }}"
+      loop: "{{ zfs_device_info.results }}"
+
+    - name: Get detailed disk sizes for ZFS devices
+      ansible.builtin.shell: |
+        for dev in {{ zfs_devices | join(' ') }}; do
+          if [ -b "$dev" ]; then
+            echo "$dev: $(lsblk -dno SIZE $dev)"
+          else
+            echo "$dev: NOT_FOUND"
+          fi
+        done
+      register: disk_sizes
+      changed_when: false
+
+    - name: Display disk sizes for RAIDZ validation
+      ansible.builtin.debug:
+        msg:
+          - "=== Disk Sizes for RAIDZ1 Validation ==="
+          - "{{ disk_sizes.stdout_lines }}"
+          - "Note: ZFS will use the smallest disk size for all disks in RAIDZ"
+
+    - name: Check for existing data on ZFS devices
+      ansible.builtin.shell: |
+        for dev in {{ zfs_devices | join(' ') }}; do
+          if [ -b "$dev" ]; then
+            if blkid "$dev" >/dev/null 2>&1; then
+              echo "$dev: HAS_DATA ($(blkid -o value -s TYPE $dev 2>/dev/null || echo 'unknown'))"
+            else
+              echo "$dev: CLEAN"
+            fi
+          else
+            echo "$dev: NOT_FOUND"
+          fi
+        done
+      register: device_data_check
+      changed_when: false
+
+    - name: Display existing data on devices
+      ansible.builtin.debug:
+        msg:
+          - "=== Device Data Status ==="
+          - "{{ device_data_check.stdout_lines }}"
+          - "Devices with existing data will be overwritten with -f flag"
+
+    - name: Check if fast disk exists
+      ansible.builtin.command: lsblk -n -o NAME,SIZE,TYPE {{ fast_disk_device }}
+      register: fast_disk_info
+      failed_when: false
+      changed_when: false
+
+    - name: Display fast disk information
+      ansible.builtin.debug:
+        msg: "Fast disk {{ fast_disk_device }}: {{ fast_disk_info.stdout if fast_disk_info.rc == 0 else 'Not found' }}"
+
+    - name: Check if ZFS pool already exists
+      ansible.builtin.command: zpool status {{ zfs_pool_name }}
+      register: zpool_status
+      failed_when: false
+      changed_when: false
+
+    - name: Create ZFS pool with RAIDZ1 if it doesn't exist
+      ansible.builtin.command: >
+        zpool create
+        -f
+        -o ashift=12
+        -O compression=lz4
+        -O atime=off
+        -O xattr=sa
+        -O dnodesize=auto
+        -m none
+        {{ zfs_pool_name }}
+        raidz1 {{ zfs_devices | join(' ') }}
+      when: zpool_status.rc != 0
+      register: zpool_create
+      changed_when: zpool_create.rc == 0
+
+    - name: Display ZFS pool creation result
+      ansible.builtin.debug:
+        msg: "ZFS pool {{ zfs_pool_name }} created successfully"
+      when: zpool_create is changed
+
+    - name: Create ZFS datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ zfs_datasets }}"
+      register: zfs_dataset_creation
+
+    - name: Set ZFS dataset mountpoints
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties:
+          mountpoint: "{{ item.mountpoint }}"
+      loop: "{{ zfs_datasets }}"
+
+    - name: Check if fast disk partitions exist
+      ansible.builtin.command: lsblk -n {{ fast_disk_device }}
+      register: fast_disk_partitions_check
+      changed_when: false
+      when: fast_disk_info.rc == 0
+
+    - name: Wipe existing partition table on fast disk
+      ansible.builtin.command: wipefs -a {{ fast_disk_device }}
+      when: fast_disk_info.rc == 0 and 'part' not in fast_disk_partitions_check.stdout
+      register: wipefs_result
+      changed_when: wipefs_result.rc == 0
+
+    - name: Create partition table on fast disk
+      ansible.builtin.command: parted {{ fast_disk_device }} mklabel gpt
+      when: fast_disk_info.rc == 0 and 'part' not in fast_disk_partitions_check.stdout
+      register: parted_result
+      changed_when: parted_result.rc == 0
+
+    - name: Verify partition table creation
+      ansible.builtin.command: parted {{ fast_disk_device }} print
+      register: partition_table_check
+      changed_when: false
+      when: fast_disk_info.rc == 0 and 'part' not in fast_disk_partitions_check.stdout
+
+    - name: Display partition table information
+      ansible.builtin.debug:
+        msg: "{{ partition_table_check.stdout_lines }}"
+      when: fast_disk_info.rc == 0 and 'part' not in fast_disk_partitions_check.stdout
+
+    - name: Create partitions on fast disk
+      community.general.parted:
+        device: "{{ fast_disk_device }}"
+        number: "{{ item.number }}"
+        state: present
+        part_start: "{{ item.start }}"
+        part_end: "{{ item.end }}"
+      loop: "{{ fast_disk_partitions }}"
+      when: fast_disk_info.rc == 0 and 'part' not in fast_disk_partitions_check.stdout
+
+    - name: Format fast disk partitions
+      community.general.filesystem:
+        fstype: "{{ item.filesystem }}"
+        dev: "{{ fast_disk_device }}{{ item.number }}"
+        opts: "-L {{ item.label }}"
+        force: false
+      loop: "{{ fast_disk_partitions }}"
+      when: fast_disk_info.rc == 0 and 'part' not in fast_disk_partitions_check.stdout
+
+    - name: Create mount points for fast disk partitions
+      ansible.builtin.file:
+        path: "{{ item.mount_point }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ fast_disk_partitions }}"
+
+    - name: Mount fast disk partitions
+      ansible.posix.mount:
+        path: "{{ item.mount_point }}"
+        src: "LABEL={{ item.label }}"
+        fstype: "{{ item.filesystem }}"
+        state: mounted
+        opts: "defaults,noatime"
+      loop: "{{ fast_disk_partitions }}"
+      when: fast_disk_info.rc == 0
+
+    - name: Check if swap file already exists
+      ansible.builtin.stat:
+        path: /swap-storage/swapfile
+      register: swapfile_exists
+      when: fast_disk_info.rc == 0
+
+    - name: Create swap file on fast storage
+      ansible.builtin.command: >
+        fallocate -l 8G /swap-storage/swapfile
+      args:
+        creates: /swap-storage/swapfile
+      when: fast_disk_info.rc == 0 and not swapfile_exists.stat.exists
+
+    - name: Set swap file permissions
+      ansible.builtin.file:
+        path: /swap-storage/swapfile
+        mode: '0600'
+        owner: root
+        group: root
+      when: fast_disk_info.rc == 0 and swapfile_exists.stat.exists
+
+    - name: Format swap file
+      ansible.builtin.command: mkswap /swap-storage/swapfile
+      when: fast_disk_info.rc == 0 and not swapfile_exists.stat.exists
+      register: mkswap_result
+      changed_when: "'Setting up swapspace' in mkswap_result.stdout"
+
+    - name: Check if swap is already active
+      ansible.builtin.command: swapon --show
+      register: current_swap_status
+      changed_when: false
+      failed_when: false
+      when: fast_disk_info.rc == 0
+
+    - name: Enable swap file
+      ansible.builtin.command: swapon /swap-storage/swapfile
+      when: fast_disk_info.rc == 0 and '/swap-storage/swapfile' not in current_swap_status.stdout
+      register: swapon_result
+      failed_when: false
+      changed_when: swapon_result.rc == 0
+
+    - name: Add swap to fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/swap-storage/swapfile none swap sw 0 0"
+        state: present
+      when: fast_disk_info.rc == 0
+
+    - name: Configure swappiness for better performance
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: '10'
+        state: present
+        sysctl_file: /etc/sysctl.d/99-swappiness.conf
+
+    - name: Configure ZFS ARC cache limit (for Pi 5 with limited RAM)
+      ansible.builtin.lineinfile:
+        path: /etc/modprobe.d/zfs.conf
+        line: "options zfs zfs_arc_max={{ (ansible_memtotal_mb * 1024 * 1024 * 0.5) | int }}"
+        create: true
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Update initramfs
+
+    - name: Create systemd override for docker to wait for ZFS
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: '0755'
+      when: ansible_service_mgr == "systemd"
+
+    - name: Configure docker to wait for ZFS datasets
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          After=zfs-mount.service
+          Wants=zfs-mount.service
+        dest: /etc/systemd/system/docker.service.d/zfs-dependency.conf
+        mode: '0644'
+      when: ansible_service_mgr == "systemd"
+      notify: Reload systemd
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Set reboot flag for ZFS changes
+      ansible.builtin.set_fact:
+        needs_reboot: true
+      when: >
+        zpool_create is changed or
+        zfs_dataset_creation is changed or
+        mkswap_result is changed or
+        reboot_required_file.stat.exists
+
+    - name: Display storage configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Storage Configuration Summary ==="
+          - "ZFS Pool: {{ zfs_pool_name }} (RAIDZ1)"
+          - "ZFS Devices: {{ zfs_devices | join(', ') }}"
+          - "Fast Disk: {{ fast_disk_device }}"
+          - "ZFS Datasets created: {{ zfs_datasets | length }}"
+          - "Fast disk partitions: {{ fast_disk_partitions | length }}"
+          - "Swap configured: 8GB on fast storage"
+          - "{{ 'REBOOT REQUIRED to finalize changes' if needs_reboot | default(false) else 'No reboot required' }}"
+
+    - name: Flush handlers before potential reboot
+      ansible.builtin.meta: flush_handlers
+
+    - name: Reboot if required
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        connect_timeout: 60
+        pre_reboot_delay: 10
+        post_reboot_delay: 30
+        msg: "Rebooting to finalize storage configuration changes"
+      when: needs_reboot | default(false)
+
+    - name: Wait for system to come back online
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 60
+        sleep: 5
+        delay: 5
+        timeout: 300
+      when: needs_reboot | default(false)
+
+    - name: Verify ZFS pool status after reboot
+      ansible.builtin.command: zpool status {{ zfs_pool_name }}
+      register: post_reboot_zpool_status
+      changed_when: false
+      when: needs_reboot | default(false)
+
+    - name: Display post-reboot ZFS status
+      ansible.builtin.debug:
+        msg: "Post-reboot ZFS pool status: {{ 'ONLINE' if 'ONLINE' in post_reboot_zpool_status.stdout else 'CHECK REQUIRED' }}"
+      when: needs_reboot | default(false) and post_reboot_zpool_status is defined
+
+  handlers:
+    - name: Update initramfs
+      ansible.builtin.command: update-initramfs -u -k all
+      when: ansible_kernel is defined
+      changed_when: true
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

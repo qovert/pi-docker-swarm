@@ -1,0 +1,156 @@
+---
+- name: Deploy Portainer to Docker Swarm
+  hosts: manager_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    portainer_stack_name: "portainer"
+    portainer_data_path: "/data/portainer"
+    stack_file_path: "./stacks/portainer-stack.yml"
+
+  tasks:
+    - name: Ensure Portainer data directory exists
+      ansible.builtin.file:
+        path: "{{ portainer_data_path }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Check if Docker Swarm is active
+      ansible.builtin.command: docker info --format '{{ "{{.Swarm.LocalNodeState}}" }}'
+      register: swarm_status
+      changed_when: false
+
+    - name: Verify Swarm is active
+      ansible.builtin.assert:
+        that:
+          - swarm_status.stdout == "active"
+        fail_msg: "Docker Swarm is not active on this node"
+        success_msg: "Docker Swarm is active"
+
+    - name: Copy Portainer stack file to manager node
+      ansible.builtin.copy:
+        src: "{{ stack_file_path }}"
+        dest: "/tmp/portainer-stack.yml"
+        mode: '0644'
+
+    - name: Deploy Portainer stack
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/portainer-stack.yml
+        {{ portainer_stack_name }}
+      register: stack_deploy
+
+    - name: Update Portainer stack if already exists
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/portainer-stack.yml
+        {{ portainer_stack_name }}
+    - name: Check current Portainer service status
+      ansible.builtin.command: >
+        docker service ls --filter name={{ portainer_stack_name }}_portainer
+      register: current_portainer_status
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for Portainer service to be running
+      ansible.builtin.shell: >
+        docker service ls --filter name={{ portainer_stack_name }}_portainer --format '{{ "{{.Replicas}}" }}' | grep -q "1/1"
+      register: service_check
+      until: service_check.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Wait for Portainer agents to be running (if deployed)
+      ansible.builtin.shell: >
+        docker service ls --filter name={{ portainer_stack_name }}_portainer_agent --format '{{ "{{.Replicas}}" }}' | grep -q -E "[0-9]+/[0-9]+"
+      register: agent_check
+      until: agent_check.rc == 0
+      retries: 15
+      delay: 10
+      changed_when: false
+      failed_when: false
+
+    - name: Get all Portainer services details
+      ansible.builtin.command: >
+        docker service ls --filter name={{ portainer_stack_name }}
+      register: portainer_services
+      changed_when: false
+
+    - name: Display Portainer deployment status
+      ansible.builtin.debug:
+        msg:
+          - "=== Portainer Deployment Status ==="
+          - "Stack Name: {{ portainer_stack_name }}"
+          - "Services:"
+          - "{{ portainer_services.stdout_lines }}"
+          - ""
+          - "Data Directory: {{ portainer_data_path }}"
+          - "Web UI: https://{{ ansible_default_ipv4.address }}:9443"
+          - "HTTP UI: http://{{ ansible_default_ipv4.address }}:9000"
+          - "Edge Agent: {{ ansible_default_ipv4.address }}:8000"
+          - ""
+          - "Cluster Configuration:"
+          - "- Manager Node: {{ ansible_default_ipv4.address }} (Portainer UI)"
+          - "- Worker Nodes: Automatic agent deployment (global mode)"
+          - "- Full cluster visibility through central UI"
+          - ""
+          - "Initial Setup:"
+          - "1. Navigate to https://{{ ansible_default_ipv4.address }}:9443"
+          - "2. Create admin user (first time only)"
+          - "3. Select 'Docker Swarm' environment"
+          - "4. Portainer will auto-detect agents on worker nodes"
+          - "5. You'll see all cluster nodes in the UI"
+
+    - name: Check Portainer container logs
+      ansible.builtin.command: >
+        docker service logs {{ portainer_stack_name }}_portainer --tail 20
+      register: portainer_logs
+      changed_when: false
+
+    - name: Display recent Portainer logs
+      ansible.builtin.debug:
+        msg:
+          - "=== Recent Portainer Logs ==="
+          - "{{ portainer_logs.stdout_lines }}"
+
+    - name: Verify Portainer is accessible
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}:9000"
+        method: GET
+        status_code: [200, 302]
+        timeout: 30
+      register: portainer_health
+      retries: 5
+      delay: 10
+      until: portainer_health.status in [200, 302]
+
+    - name: Display successful deployment message
+      ansible.builtin.debug:
+        msg:
+          - "✅ Portainer with cluster agents successfully deployed!"
+          - ""
+          - "Access URLs:"
+          - "  HTTPS: https://{{ ansible_default_ipv4.address }}:9443"
+          - "  HTTP:  http://{{ ansible_default_ipv4.address }}:9000"
+          - ""
+          - "Cluster Overview:"
+          - "  Manager Node: {{ ansible_default_ipv4.address }}"
+          - "  Worker Nodes: Agents deployed automatically"
+          - "  Total Cluster Visibility: ✅ Complete"
+          - ""
+          - "Next steps:"
+          - "1. Open https://{{ ansible_default_ipv4.address }}:9443 in your browser"
+          - "2. Accept the self-signed certificate warning"
+          - "3. Create your admin account"
+          - "4. Select 'Docker Swarm' as the environment type"
+          - "5. Verify all cluster nodes appear in the dashboard"
+          - "6. Start managing containers across the entire cluster!"
+
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: "/tmp/portainer-stack.yml"
+        state: absent

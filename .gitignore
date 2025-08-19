@@ -1,0 +1,87 @@
+# Ansible
+*.retry
+.ansible/
+ansible.log
+*.log
+
+# Sensitive configuration files
+environments/*/group_vars/all.yml
+environments/*/host_vars/
+vault_pass.txt
+.vault_pass
+
+# SSH keys and certificates
+*.pem
+*.key
+*.crt
+*.p12
+id_rsa*
+id_ed25519*
+known_hosts
+authorized_keys
+
+# Backup files
+*.bak
+*.backup
+*.orig
+*~
+.#*
+#*#
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/.ropeproject
+.idea/
+*.swp
+*.swo
+*~
+
+# Python (for any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Docker
+docker-compose.override.yml
+.env.local
+.env.*.local
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local testing and development
+test/
+testing/
+local/
+*.local
+
+# Terraform (if used for infrastructure)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Keep example files but ignore actual config
+!environments/*/group_vars/all.yml.example
+!environments/*/inventory.yml.example

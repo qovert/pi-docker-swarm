@@ -1,0 +1,59 @@
+---
+- name: Quick Deploy/Update Portainer
+  hosts: manager_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    portainer_stack_name: "portainer"
+    stack_file_path: "./stacks/portainer-stack.yml"
+
+  tasks:
+    - name: Check if Docker Swarm is active
+      ansible.builtin.command: docker info --format '{{ "{{.Swarm.LocalNodeState}}" }}'
+      register: swarm_status
+      changed_when: false
+
+    - name: Verify Swarm is active
+      ansible.builtin.assert:
+        that:
+          - swarm_status.stdout == "active"
+        fail_msg: "Docker Swarm is not active on this node"
+
+    - name: Copy Portainer stack file to manager node
+      ansible.builtin.copy:
+        src: "{{ stack_file_path }}"
+        dest: "/tmp/portainer-stack.yml"
+        mode: '0644'
+
+    - name: Deploy/Update Portainer stack
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/portainer-stack.yml
+        {{ portainer_stack_name }}
+      register: stack_result
+      changed_when: true
+
+    - name: Wait a moment for services to initialize
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Check final service status
+      ansible.builtin.command: docker service ls --filter name={{ portainer_stack_name }}
+      register: final_status
+      changed_when: false
+
+    - name: Display deployment result
+      ansible.builtin.debug:
+        msg:
+          - "=== Portainer Deployment Complete ==="
+          - "{{ final_status.stdout_lines }}"
+          - ""
+          - "Access Portainer at:"
+          - "  HTTPS: https://{{ ansible_default_ipv4.address }}:9443"
+          - "  HTTP:  http://{{ ansible_default_ipv4.address }}:9000"
+
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: "/tmp/portainer-stack.yml"
+        state: absent
