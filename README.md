@@ -1,10 +1,6 @@
 # Raspberry Pi 5 Cluster Management
 
-Automated dep- **Portainer UI**: `https://[manager-ip]:9443`
-- **SSH**: `ssh ditto@[node-ip]`
-- **Docker CLI**: Available on all nodes
-
-## 🔄 Maintenancent and management for a Raspberry Pi 5 cluster with ZFS storage and Docker Swarm orchestration. All playbooks are fully idempotent and can be run multiple times safely.
+Automated deployment and management for a Raspberry Pi 5 cluster with ZFS storage and Docker Swarm orchestration. Fully idempotent Infrastructure-as-Code solution with extensible service management.
 
 ## 🚀 Quick Start
 
@@ -16,18 +12,60 @@ make deploy-all
 make deploy-ssh-keys        # SSH keys and security
 make deploy-infrastructure  # ZFS storage configuration  
 make deploy-platform       # Docker Swarm cluster
-make deploy-apps           # Portainer and applications
+make deploy-services        # Deploy all services from services.yml
 ```
+
+## 🎯 Service Management
+
+This cluster uses a **dynamic service management system** with a clean, non-redundant interface:
+
+### **Makefile** - High-level cluster operations:
+```bash
+make deploy-all              # Complete cluster deployment
+make deploy-services         # Deploy all enabled services
+make service-cli             # Launch interactive service manager
+```
+
+### **Service Manager CLI** - Detailed service operations:
+```bash
+./service-manager.sh deploy monitoring     # Deploy specific service
+./service-manager.sh remove portainer      # Remove specific service
+./service-manager.sh restart monitoring    # Restart specific service
+./service-manager.sh status portainer      # Check service status  
+./service-manager.sh logs monitoring       # View service logs
+./service-manager.sh list                  # List all services
+./service-manager.sh cluster-status        # Complete cluster overview
+```
+
+### Adding New Services
+1. **Edit `services.yml`** - Add your service definition:
+```yaml
+services:
+  your-service:
+    description: "Your awesome service"
+    enabled: true
+    stack_file: "your-service-stack.yml"
+    data_directories:
+      - /opt/docker-data/your-service/data
+    health_check:
+      enabled: true
+      url: "http://localhost:8080/health"
+```
+
+2. **Create stack file** - Add Docker Compose file in `applications/stacks/`
+3. **Deploy** - `./service-manager.sh deploy your-service`
+
+**That's it!** No code changes needed.
 
 ## 🏗️ Architecture
 
 **Hardware**: 3x Raspberry Pi 5 (8GB RAM) with 4x 512GB SATA SSDs + 1x 120GB NVMe per node
 
 **Storage**: 
-- ZFS RAIDZ1 pool (~1.3TB usable) for Docker and application data
-- NVMe SSD for logs, cache, tmp, and swap
+- ZFS RAIDZ1 pool for Docker and application data
+- SSD for logs, cache, tmp, and swap
 
-**Platform**: Docker Swarm with Portainer management UI
+**Platform**: Docker Swarm with code-managed services (no Portainer dependency!)
 
 ## ⚙️ Configuration
 
@@ -35,44 +73,73 @@ make deploy-apps           # Portainer and applications
 2. **Configure variables**: Copy and edit `environments/production/group_vars/all.yml.example` → `all.yml`
 3. **Change passwords**: Update `grafana_admin_password` and other credentials
 4. **SSH keys**: Add your public keys to `security/ssh_keys/`
+5. **Services**: Edit `services.yml` to enable/disable services
 
 ## 📋 Commands
 
-
-**Deployment**:
-- `make deploy-all` - Complete cluster setup
+**Complete Deployment**:
+- `make deploy-all` - Complete cluster setup with dynamic services
 - `make deploy-infrastructure` - ZFS storage only
 - `make deploy-platform` - Docker Swarm only
-- `make deploy-apps` - Applications only
+- `make deploy-services` - All enabled services from services.yml
 
-**Management**:
+**Service Management**:
+- `./service-manager.sh list` - Show all available services
+- `./service-manager.sh deploy [service]` - Deploy specific service
+- `./service-manager.sh remove [service]` - Remove service (with confirmation)
+- `./service-manager.sh restart [service]` - Restart service
+- `./service-manager.sh status [service]` - Get service status
+- `./service-manager.sh logs [service]` - View service logs
+
+**Cluster Management**:
 - `make deploy-ssh-keys` - Deploy SSH access
+- `make check-connectivity` - Test SSH connectivity
 - `make reboot-cluster` - Safe cluster reboot
 - `make clean-backups` - Remove old backups
 
 ## 🎯 Access Points
 
-- **Portainer UI**: `https://[manager-ip]:9443`
 - **SSH**: `ssh ditto@[node-ip]`
 - **Docker CLI**: Available on all nodes
+- **Service UIs**: Check service configurations in `services.yml`
 
-## � Maintenance
+## 🔄 Maintenance
 
 ```bash
 # Check cluster status
-ansible manager_nodes -m shell -a "docker node ls"
+./service-manager.sh cluster-status
 
-# View service logs
-docker service logs [service-name]
+# Individual service status
+./service-manager.sh status monitoring
+
+# View service logs  
+./service-manager.sh logs portainer
+
+# Deploy all services
+make deploy-services
 
 # Storage health
 ansible cluster_nodes -m shell -a "zpool status"
 ```
 
-## ✨ Features
+## ✨ Key Features
 
-- **Fully Idempotent**: All playbooks can run multiple times safely
-- **ZFS Storage**: Automated RAIDZ1 setup with compression
-- **Container Platform**: Production-ready Docker Swarm
-- **Web Management**: Portainer for visual cluster management
-- **Professional Structure**: Clean, maintainable Ansible code
+- **🔄 Fully Idempotent**: All playbooks can run multiple times safely
+- **💾 ZFS Storage**: Automated RAIDZ1 setup with compression  
+- **🐳 Container Platform**: Production-ready Docker Swarm
+- **🚀 Dynamic Services**: Add services by editing YAML only
+- **📋 Easy CLI**: Simple commands for all operations
+- **📊 Health Monitoring**: Built-in health checks for services
+- **🎯 No GUI Dependency**: Everything managed through code
+- **📁 Version Controlled**: All configurations in Git
+
+## 🏆 Migration from Portainer
+
+This system replaces manual Portainer management:
+
+1. **Remove Portainer-managed stacks** (if any)
+2. **Define services** in `services.yml` 
+3. **Deploy**: `./service-manager.sh deploy-all`
+4. **Manage**: All through CLI and code
+
+Your cluster is now fully Infrastructure-as-Code! 🎉
