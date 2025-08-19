@@ -165,21 +165,21 @@
 
         - name: Display service status
           ansible.builtin.debug:
-            msg:
-              - "=========================================="
-              - "📊 Service Status: {{ service }}"
-              - "=========================================="
-              - "Stack exists: {{ 'Yes ✅' if service in existing_stacks.stdout_lines else 'No ❌' }}"
-              - "{% if service in existing_stacks.stdout_lines %}"
-              - "Services:"
-              - "{{ stack_services.stdout_lines }}"
-              - "{% endif %}"
-              - "{% if health_results.results is defined %}"
-              - "Health Checks:"
-              - "{% for result in health_results.results %}"
-              - "- {{ result.item.name | default('Health Check') }}: {{ 'Healthy ✅' if result.status == result.item.expected_status else 'Unhealthy ❌' }}"
-              - "{% endfor %}"
-              - "{% endif %}"
+            msg: |
+              ==========================================
+              📊 Service Status: {{ service }}
+              ==========================================
+              Stack exists: {{ 'Yes ✅' if service in existing_stacks.stdout_lines else 'No ❌' }}
+              {% if service in existing_stacks.stdout_lines %}
+              Services:
+              {{ stack_services.stdout_lines | join('\n') }}
+              {% endif %}
+              {% if health_results.results is defined %}
+              Health Checks:
+              {% for result in health_results.results %}
+              - {{ result.item.name | default('Health Check') }}: {{ 'Healthy ✅' if result.status == result.item.expected_status else 'Unhealthy ❌' }}
+              {% endfor %}
+              {% endif %}
 
     # =============================================================================
     # Logs Operation
@@ -200,9 +200,9 @@
 
         - name: Display service logs
           ansible.builtin.debug:
-            msg:
-              - "=========================================="
-              - "📜 Service Logs: {{ item.item }}"
-              - "=========================================="
-              - "{{ item.stdout_lines }}"
+            msg: |
+              ==========================================
+              📜 Service Logs: {{ item.item }}
+              ==========================================
+              {{ item.stdout_lines | join('\n') }}
           loop: "{{ service_logs.results }}"

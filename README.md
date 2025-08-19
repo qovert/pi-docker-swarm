@@ -29,9 +29,9 @@ make service-cli             # Launch interactive service manager
 ### **Service Manager CLI** - Detailed service operations:
 ```bash
 ./service-manager.sh deploy monitoring     # Deploy specific service
-./service-manager.sh remove portainer      # Remove specific service
+./service-manager.sh remove monitoring     # Remove specific service
 ./service-manager.sh restart monitoring    # Restart specific service
-./service-manager.sh status portainer      # Check service status  
+./service-manager.sh status monitoring     # Check service status  
 ./service-manager.sh logs monitoring       # View service logs
 ./service-manager.sh list                  # List all services
 ./service-manager.sh cluster-status        # Complete cluster overview
@@ -65,7 +65,7 @@ services:
 - ZFS RAIDZ1 pool for Docker and application data
 - SSD for logs, cache, tmp, and swap
 
-**Platform**: Docker Swarm with code-managed services (no Portainer dependency!)
+**Platform**: Docker Swarm with full Infrastructure-as-Code management
 
 ## ⚙️ Configuration
 
@@ -113,7 +113,7 @@ services:
 ./service-manager.sh status monitoring
 
 # View service logs  
-./service-manager.sh logs portainer
+./service-manager.sh logs monitoring
 
 # Deploy all services
 make deploy-services
@@ -133,13 +133,12 @@ ansible cluster_nodes -m shell -a "zpool status"
 - **🎯 No GUI Dependency**: Everything managed through code
 - **📁 Version Controlled**: All configurations in Git
 
-## 🏆 Migration from Portainer
+## � Complete Infrastructure-as-Code Solution
 
-This system replaces manual Portainer management:
+This system provides complete Docker Swarm lifecycle management through code:
 
-1. **Remove Portainer-managed stacks** (if any)
-2. **Define services** in `services.yml` 
-3. **Deploy**: `./service-manager.sh deploy-all`
-4. **Manage**: All through CLI and code
+1. **Define services** in `services.yml` 
+2. **Deploy**: `./service-manager.sh deploy-all`
+3. **Manage**: All through CLI and code
 
 Your cluster is now fully Infrastructure-as-Code! 🎉

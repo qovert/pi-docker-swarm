@@ -16,21 +16,6 @@ global:
 services:
   
   # =============================================================================
-  # Core Management Services
-  # =============================================================================
-  portainer:
-    enabled: true
-    stack_file: "portainer-stack.yml"
-    description: "Container management web interface"
-    data_directories:
-      - "/data/portainer"
-    health_checks:
-      - url: "http://{{ ansible_default_ipv4.address }}:9000"
-        expected_status: 200
-    dependencies: []
-    tags: ["management", "core"]
-    
-  # =============================================================================
   # Monitoring Stack
   # =============================================================================
   monitoring:

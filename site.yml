@@ -14,9 +14,9 @@
   import_playbook: container-platform/setup_docker_swarm.yml
   tags: [container-platform, docker, swarm]
 
-- name: "Phase 4: Application Deployment"
-  import_playbook: applications/deploy_portainer.yml
-  tags: [applications, portainer]
+# Applications now managed through dynamic services
+# Use: ./service-manager.sh list to see available services
+# Use: ./service-manager.sh deploy <service> to deploy specific services
 
 - name: "Phase 5: Monitoring Deployment"
   import_playbook: applications/deploy_monitoring.yml
