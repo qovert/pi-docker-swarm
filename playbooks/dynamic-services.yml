@@ -1,0 +1,211 @@
+---
+# =============================================================================
+# Dynamic Services Deployment
+# =============================================================================
+# Dynamically deploys all enabled services from services.yml inventory
+# Extensible: Add new services by updating services.yml - no code changes needed
+# =============================================================================
+
+- name: Deploy All Enabled Services
+  hosts: manager_nodes
+  become: true
+  gather_facts: true
+
+  tasks:
+    # =============================================================================
+    # Load Service Configuration
+    # =============================================================================
+    - name: Load services configuration
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../services.yml"
+        name: services_config
+
+    - name: Set service variables
+      ansible.builtin.set_fact:
+        stacks_directory: "{{ playbook_dir }}/../applications/stacks"
+        configs_directory: "{{ playbook_dir }}/../applications/config"
+        data_path: "/data"
+
+    # =============================================================================
+    # Service Discovery and Preparation
+    # =============================================================================
+    - name: Get list of enabled services
+      ansible.builtin.set_fact:
+        enabled_services: "{{ services_config.services | dict2items | selectattr('value.enabled', 'equalto', true) | list }}"
+
+    - name: Display services to be deployed
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          🚀 Services Deployment Plan
+          ==========================================
+          {% for service in enabled_services %}
+          ✅ {{ service.key }} - {{ service.value.description }}
+          {% endfor %}
+          ==========================================
+
+    # =============================================================================
+    # Data Directory Creation
+    # =============================================================================
+    - name: Create service data directories
+      ansible.builtin.file:
+        path: "{{ item.1 }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop: "{{ enabled_services | subelements('value.data_directories', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.1 }} ({{ item.0.key }})"
+
+    # =============================================================================
+    # Special Permissions
+    # =============================================================================
+    - name: Apply special permissions
+      ansible.builtin.file:
+        path: "{{ item.1.path }}"
+        owner: "{{ item.1.owner | default('root') }}"
+        group: "{{ item.1.group | default('root') }}"
+        mode: "{{ item.1.mode | default('0755') }}"
+        recurse: "{{ item.1.recurse | default(false) }}"
+      loop: "{{ enabled_services | subelements('value.special_permissions', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.1.path }} ({{ item.0.key }})"
+
+    # =============================================================================
+    # Configuration Files Deployment
+    # =============================================================================
+    - name: Deploy service configuration files
+      ansible.builtin.copy:
+        src: "{{ configs_directory }}/{{ item.1.src }}"
+        dest: "{{ item.1.dest }}"
+        mode: "{{ item.1.mode | default('0644') }}"
+        owner: "{{ item.1.owner | default('root') }}"
+        group: "{{ item.1.group | default('root') }}"
+      loop: "{{ enabled_services | subelements('value.config_files', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.1.src }} -> {{ item.1.dest }} ({{ item.0.key }})"
+
+    # =============================================================================
+    # Stack Files Deployment
+    # =============================================================================
+    - name: Copy stack files to target node
+      ansible.builtin.copy:
+        src: "{{ stacks_directory }}/{{ item.value.stack_file }}"
+        dest: "/tmp/{{ item.value.stack_file }}"
+        mode: '0644'
+      loop: "{{ enabled_services }}"
+      loop_control:
+        label: "{{ item.value.stack_file }} ({{ item.key }})"
+
+    # =============================================================================
+    # Service Discovery
+    # =============================================================================
+    - name: Check existing stacks
+      ansible.builtin.command: docker stack ls --format '{{ "{{.Name}}" }}'
+      register: existing_stacks
+      changed_when: false
+
+    # =============================================================================
+    # Stack Deployment
+    # =============================================================================
+    - name: Deploy new stacks
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/{{ item.value.stack_file }}
+        {{ item.key }}
+      loop: "{{ enabled_services }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: "item.key not in existing_stacks.stdout_lines"
+      register: new_deployments
+
+    - name: Update existing stacks
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file /tmp/{{ item.value.stack_file }}
+        {{ item.key }}
+      loop: "{{ enabled_services }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: "item.key in existing_stacks.stdout_lines"
+      register: stack_updates
+
+    # =============================================================================
+    # Deployment Status
+    # =============================================================================
+    - name: Wait for services to start
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Get final stack status
+      ansible.builtin.command: docker stack ls
+      register: final_stacks
+      changed_when: false
+
+    - name: Get service status
+      ansible.builtin.command: docker service ls
+      register: service_status
+      changed_when: false
+
+    - name: Display deployment results
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "🎯 Services Deployment Complete"
+          - "=========================================="
+          - "📦 Deployed Stacks:"
+          - "{{ final_stacks.stdout_lines }}"
+          - ""
+          - "🔧 Running Services:"
+          - "{{ service_status.stdout_lines }}"
+          - ""
+          - "✅ All enabled services have been deployed"
+
+    # =============================================================================
+    # Health Checks
+    # =============================================================================
+    - name: Perform service health checks
+      ansible.builtin.uri:
+        url: "{{ item.1.url }}"
+        method: GET
+        status_code: "{{ item.1.expected_status }}"
+        timeout: 10
+      register: health_check_results
+      retries: 3
+      delay: 10
+      ignore_errors: true
+      loop: "{{ enabled_services | subelements('value.health_checks', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.1.name | default(item.0.key) }}"
+
+    - name: Generate health check summary
+      ansible.builtin.set_fact:
+        health_summary: "{{ health_summary | default([]) + [check_name + ': ' + check_status] }}"
+      vars:
+        check_name: "{{ item.item.1.name | default(item.item.0.key) }}"
+        check_status: "{{ 'Healthy ✅' if item.status == item.item.1.expected_status else 'Unhealthy ❌' }}"
+      loop: "{{ health_check_results.results | default([]) }}"
+      loop_control:
+        label: "{{ check_name }}"
+      when: 
+        - health_check_results.results is defined
+        - item.item is defined
+
+    - name: Display health check results
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          🏥 Service Health Checks
+          ==========================================
+          {% for summary_line in health_summary | default(['No health checks performed']) %}
+          {{ summary_line }}
+          {% endfor %}
+          
+          🌐 Access URLs:
+          {% for service in enabled_services %}
+          {% for check in service.value.health_checks | default([]) %}
+          - {{ check.name | default(service.key) }}: {{ check.url }}
+          {% endfor %}
+          {% endfor %}
+          ==========================================

@@ -1,0 +1,111 @@
+---
+# =============================================================================
+# Services Inventory - Declarative Stack Configuration
+# =============================================================================
+# This file defines all services/stacks to be deployed in the cluster
+# Add new services here to enable automatic deployment
+# =============================================================================
+
+# Global configuration for all services
+global:
+  data_root: "/data"
+  stack_directory: "{{ playbook_dir }}/../applications/stacks"
+  config_directory: "{{ playbook_dir }}/../applications/config"
+
+# Service definitions
+services:
+  
+  # =============================================================================
+  # Core Management Services
+  # =============================================================================
+  portainer:
+    enabled: true
+    stack_file: "portainer-stack.yml"
+    description: "Container management web interface"
+    data_directories:
+      - "/data/portainer"
+    health_checks:
+      - url: "http://{{ ansible_default_ipv4.address }}:9000"
+        expected_status: 200
+    dependencies: []
+    tags: ["management", "core"]
+    
+  # =============================================================================
+  # Monitoring Stack
+  # =============================================================================
+  monitoring:
+    enabled: true
+    stack_file: "monitoring-stack.yml"
+    description: "Prometheus, Grafana, Node Exporter monitoring"
+    data_directories:
+      - "/data/monitoring"
+      - "/data/monitoring/prometheus"
+      - "/data/monitoring/prometheus-config"
+      - "/data/monitoring/prometheus-config/rules"
+      - "/data/monitoring/grafana"
+      - "/data/monitoring/grafana-config"
+      - "/data/monitoring/grafana-config/provisioning"
+      - "/data/monitoring/grafana-config/provisioning/datasources"
+      - "/data/monitoring/grafana-config/provisioning/dashboards"
+      - "/data/monitoring/grafana-dashboards"
+    config_files:
+      - src: "prometheus.yml"
+        dest: "/data/monitoring/prometheus-config/prometheus.yml"
+      - src: "prometheus-rules.yml"
+        dest: "/data/monitoring/prometheus-config/rules/prometheus-rules.yml"
+      - src: "grafana-datasources.yml"
+        dest: "/data/monitoring/grafana-config/provisioning/datasources/datasources.yml"
+      - src: "grafana-dashboards.yml"
+        dest: "/data/monitoring/grafana-config/provisioning/dashboards/dashboards.yml"
+      - src: "node-exporter-full-clean.json"
+        dest: "/data/monitoring/grafana-dashboards/node-exporter-full.json"
+        owner: "472"
+        group: "0"
+    special_permissions:
+      - path: "/data/monitoring/grafana"
+        owner: "472"
+        group: "472"
+        recurse: true
+      - path: "/data/monitoring/grafana-dashboards"
+        owner: "472"
+        group: "472"
+        recurse: true
+    health_checks:
+      - url: "http://{{ ansible_default_ipv4.address }}:9090/-/healthy"
+        expected_status: 200
+        name: "Prometheus"
+      - url: "http://{{ ansible_default_ipv4.address }}:3000/api/health"
+        expected_status: 200
+        name: "Grafana"
+    dependencies: []
+    tags: ["monitoring", "core"]
+
+# =============================================================================
+# Template for adding new services
+# =============================================================================
+# 
+# new_service:
+#   enabled: true|false
+#   stack_file: "new-service-stack.yml"
+#   description: "Brief description of the service"
+#   data_directories:
+#     - "/data/new-service"
+#   config_files:
+#     - src: "config.yml"
+#       dest: "/data/new-service/config.yml"
+#       mode: "0644"
+#       owner: "root"  # optional
+#       group: "root"  # optional
+#   special_permissions:  # optional
+#     - path: "/data/new-service"
+#       owner: "1000"
+#       group: "1000"
+#       recurse: true
+#   health_checks:
+#     - url: "http://{{ ansible_default_ipv4.address }}:8080"
+#       expected_status: 200
+#       name: "New Service"
+#   dependencies: ["other_service"]  # optional
+#   tags: ["web", "database", "custom"]
+#
+# =============================================================================

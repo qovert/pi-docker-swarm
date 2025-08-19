@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# Pi Docker Swarm Cluster - Main Orchestrator
+# =============================================================================
+# Complete cluster lifecycle management with dynamic service deployment
+# =============================================================================
+
+# =============================================================================
+# Phase 1: Security Setup
+# =============================================================================
+- import_playbook: security/populate_authorized_keys.yml
+  tags: ["security"]
+
+# =============================================================================
+# Phase 2: Infrastructure Setup
+# =============================================================================
+- import_playbook: infrastructure/configure_storage.yml
+  tags: ["infrastructure"]
+
+# =============================================================================
+# Phase 3: Container Platform Setup
+# =============================================================================
+- import_playbook: container-platform/setup_docker_swarm.yml
+  tags: ["container-platform"]
+
+# =============================================================================
+# Phase 4: Dynamic Service Deployment
+# =============================================================================
+- import_playbook: playbooks/dynamic-services.yml
+  tags: ["services"]

@@ -1,0 +1,208 @@
+---
+# =============================================================================
+# Stack Management Operations
+# =============================================================================
+# Individual stack operations: deploy, remove, restart, status
+# Usage: ansible-playbook stack-management.yml -e "operation=deploy service=myapp"
+# =============================================================================
+
+- name: Stack Management Operations
+  hosts: manager_nodes
+  become: true
+  gather_facts: true
+
+  # Required variables (passed via -e):
+  # operation: deploy|remove|restart|status|logs
+  # service: service_name (from services.yml)
+
+  pre_tasks:
+    # =============================================================================
+    # Load Service Configuration
+    # =============================================================================
+    - name: Load services configuration
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../services.yml"
+        name: services_config
+
+    - name: Set service variables
+      ansible.builtin.set_fact:
+        stacks_directory: "{{ playbook_dir }}/../applications/stacks"
+        configs_directory: "{{ playbook_dir }}/../applications/config"
+        data_path: "/data"
+
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Missing required variable: {{ item }}"
+      when: vars[item] is not defined
+      loop:
+        - operation
+        - service
+
+    - name: Validate service exists in inventory
+      ansible.builtin.fail:
+        msg: "Service '{{ service }}' not found in services.yml"
+      when: service not in services_config.services
+
+    - name: Set service configuration
+      ansible.builtin.set_fact:
+        service_config: "{{ services_config.services[service] }}"
+
+  tasks:
+    # =============================================================================
+    # Deploy Operation
+    # =============================================================================
+    - name: Deploy single service
+      when: operation == "deploy"
+      block:
+        - name: Create data directories for service
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            mode: '0755'
+            owner: root
+            group: root
+          loop: "{{ service_config.data_directories | default([]) }}"
+
+        - name: Apply special permissions
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            owner: "{{ item.owner | default('root') }}"
+            group: "{{ item.group | default('root') }}"
+            mode: "{{ item.mode | default('0755') }}"
+            recurse: "{{ item.recurse | default(false) }}"
+          loop: "{{ service_config.special_permissions | default([]) }}"
+
+        - name: Deploy configuration files
+          ansible.builtin.copy:
+            src: "{{ configs_directory }}/{{ item.src }}"
+            dest: "{{ item.dest }}"
+            mode: "{{ item.mode | default('0644') }}"
+            owner: "{{ item.owner | default('root') }}"
+            group: "{{ item.group | default('root') }}"
+          loop: "{{ service_config.config_files | default([]) }}"
+
+        - name: Copy stack file to target
+          ansible.builtin.copy:
+            src: "{{ stacks_directory }}/{{ service_config.stack_file }}"
+            dest: "/tmp/{{ service_config.stack_file }}"
+            mode: '0644'
+
+        - name: Deploy stack
+          ansible.builtin.command: >
+            docker stack deploy
+            --compose-file /tmp/{{ service_config.stack_file }}
+            {{ service }}
+
+        - name: Display deployment result
+          ansible.builtin.debug:
+            msg: "✅ Service '{{ service }}' deployed successfully"
+
+    # =============================================================================
+    # Remove Operation
+    # =============================================================================
+    - name: Remove service
+      when: operation == "remove"
+      block:
+        - name: Remove stack
+          ansible.builtin.command: docker stack rm {{ service }}
+
+        - name: Wait for stack removal
+          ansible.builtin.pause:
+            seconds: 10
+
+        - name: Display removal result
+          ansible.builtin.debug:
+            msg: "🗑️ Service '{{ service }}' removed successfully"
+
+    # =============================================================================
+    # Restart Operation
+    # =============================================================================
+    - name: Restart service
+      when: operation == "restart"
+      block:
+        - name: Copy stack file to target
+          ansible.builtin.copy:
+            src: "{{ stacks_directory }}/{{ service_config.stack_file }}"
+            dest: "/tmp/{{ service_config.stack_file }}"
+            mode: '0644'
+
+        - name: Redeploy stack (restart)
+          ansible.builtin.command: >
+            docker stack deploy
+            --compose-file /tmp/{{ service_config.stack_file }}
+            {{ service }}
+
+        - name: Display restart result
+          ansible.builtin.debug:
+            msg: "🔄 Service '{{ service }}' restarted successfully"
+
+    # =============================================================================
+    # Status Operation
+    # =============================================================================
+    - name: Get service status
+      when: operation == "status"
+      block:
+        - name: Check if stack exists
+          ansible.builtin.command: docker stack ls --format '{{ "{{.Name}}" }}'
+          register: existing_stacks
+          changed_when: false
+
+        - name: Get stack services
+          ansible.builtin.command: docker stack services {{ service }}
+          register: stack_services
+          changed_when: false
+          when: service in existing_stacks.stdout_lines
+
+        - name: Perform health checks
+          ansible.builtin.uri:
+            url: "{{ item.url }}"
+            method: GET
+            status_code: "{{ item.expected_status }}"
+            timeout: 10
+          register: health_results
+          ignore_errors: true
+          loop: "{{ service_config.health_checks | default([]) }}"
+
+        - name: Display service status
+          ansible.builtin.debug:
+            msg:
+              - "=========================================="
+              - "📊 Service Status: {{ service }}"
+              - "=========================================="
+              - "Stack exists: {{ 'Yes ✅' if service in existing_stacks.stdout_lines else 'No ❌' }}"
+              - "{% if service in existing_stacks.stdout_lines %}"
+              - "Services:"
+              - "{{ stack_services.stdout_lines }}"
+              - "{% endif %}"
+              - "{% if health_results.results is defined %}"
+              - "Health Checks:"
+              - "{% for result in health_results.results %}"
+              - "- {{ result.item.name | default('Health Check') }}: {{ 'Healthy ✅' if result.status == result.item.expected_status else 'Unhealthy ❌' }}"
+              - "{% endfor %}"
+              - "{% endif %}"
+
+    # =============================================================================
+    # Logs Operation
+    # =============================================================================
+    - name: Get service logs
+      when: operation == "logs"
+      block:
+        - name: Get service list for stack
+          ansible.builtin.command: docker stack services {{ service }} --format '{{ "{{.Name}}" }}'
+          register: service_names
+          changed_when: false
+
+        - name: Get logs for each service
+          ansible.builtin.command: docker service logs {{ item }} --tail 50
+          register: service_logs
+          changed_when: false
+          loop: "{{ service_names.stdout_lines }}"
+
+        - name: Display service logs
+          ansible.builtin.debug:
+            msg:
+              - "=========================================="
+              - "📜 Service Logs: {{ item.item }}"
+              - "=========================================="
+              - "{{ item.stdout_lines }}"
+          loop: "{{ service_logs.results }}"
