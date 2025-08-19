@@ -6,9 +6,9 @@
   import_playbook: security/populate_authorized_keys.yml
   tags: [security, ssh-keys]
 
-- name: "Phase 2: Infrastructure Setup"
-  import_playbook: infrastructure/configure_storage.yml
-  tags: [infrastructure, storage, zfs]
+- name: Configure Storage
+  import_playbook: playbooks/configure-storage.yml
+  tags: [storage, infrastructure]
 
 - name: "Phase 3: Container Platform Setup"
   import_playbook: container-platform/setup_docker_swarm.yml

@@ -46,8 +46,15 @@ show_usage() {
     echo "  $0 list-running         - List currently running services"
     echo "  $0 cluster-status       - Show complete cluster status"
     echo ""
-    print_color $GREEN "💡 Examples:"
-    echo "  $0 deploy monitoring"
+    print_color $GREEN "�️  Storage Management:"
+    echo "  $0 setup-zfs [service]  - Create ZFS dataset for service"
+    echo "  $0 setup-sync [service] - Configure syncoid for service"
+    echo "  $0 sync-status          - Show syncoid synchronization status"
+    echo ""
+    print_color $GREEN "�💡 Examples:"
+    echo "  $0 deploy komga"
+    echo "  $0 setup-zfs komga"
+    echo "  $0 setup-sync komga"
     echo "  $0 status monitoring"
     echo "  $0 logs monitoring"
     echo "  $0 remove monitoring"
@@ -287,6 +294,38 @@ case "${1:-}" in
         show_cluster_status
         ;;
     
+    "setup-zfs")
+        if [ -z "${2:-}" ]; then
+            print_color $RED "❌ Error: Service name required"
+            echo "Usage: $0 setup-zfs [service]"
+            exit 1
+        fi
+        check_service_exists "$2"
+        print_color $BLUE "🗄️  Setting up ZFS dataset for service: $2"
+        ansible-playbook "$SCRIPT_DIR/playbooks/manage-zfs-datasets.yml" -e "target_service=$2"
+        ;;
+    
+    "setup-sync")
+        if [ -z "${2:-}" ]; then
+            print_color $RED "❌ Error: Service name required"
+            echo "Usage: $0 setup-sync [service]"
+            exit 1
+        fi
+        check_service_exists "$2"
+        print_color $BLUE "🔄 Setting up syncoid for service: $2"
+        ansible-playbook "$SCRIPT_DIR/playbooks/setup-syncoid.yml" -e "target_service=$2"
+        ;;
+    
+    "sync-status")
+        print_color $BLUE "📊 Checking syncoid synchronization status"
+        echo ""
+        print_color $CYAN "Recent sync logs:"
+        ansible all -m shell -a "tail -n 5 /var/log/syncoid-*.log 2>/dev/null || echo 'No sync logs found'"
+        echo ""
+        print_color $CYAN "ZFS dataset replication status:"
+        ansible all -m shell -a "zfs list -t snapshot | grep '@syncoid' | tail -n 10 || echo 'No syncoid snapshots found'"
+        ;;
+
     "help"|"-h"|"--help"|"")
         show_usage
         ;;

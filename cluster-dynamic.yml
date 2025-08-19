@@ -6,15 +6,18 @@
 # =============================================================================
 
 # =============================================================================
-# Phase 1: Security Setup
+# Phase 1: Security Setup - SSH Keys and Access
 # =============================================================================
+- import_playbook: playbooks/setup-cluster-ssh.yml
+  tags: ["security", "ssh"]
+
 - import_playbook: security/populate_authorized_keys.yml
-  tags: ["security"]
+  tags: ["security", "keys"]
 
 # =============================================================================
 # Phase 2: Infrastructure Setup
 # =============================================================================
-- import_playbook: infrastructure/configure_storage.yml
+- import_playbook: playbooks/configure-storage.yml
   tags: ["infrastructure"]
 
 # =============================================================================
@@ -24,7 +27,19 @@
   tags: ["container-platform"]
 
 # =============================================================================
-# Phase 4: Dynamic Service Deployment
+# Phase 4: ZFS Dataset Management
+# =============================================================================
+- import_playbook: playbooks/manage-zfs-datasets.yml
+  tags: ["zfs", "datasets"]
+
+# =============================================================================
+# Phase 5: Syncoid Setup for Data Synchronization
+# =============================================================================
+- import_playbook: playbooks/setup-syncoid.yml
+  tags: ["syncoid", "synchronization"]
+
+# =============================================================================
+# Phase 6: Dynamic Service Deployment
 # =============================================================================
 - import_playbook: playbooks/dynamic-services.yml
   tags: ["services"]

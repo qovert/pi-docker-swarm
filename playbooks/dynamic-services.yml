@@ -45,6 +45,35 @@
           ==========================================
 
     # =============================================================================
+    # ZFS Dataset Management
+    # =============================================================================
+    - name: Create ZFS datasets for services
+      delegate_to: "{{ item[1] }}"
+      zfs:
+        name: "{{ item[0].value.zfs_dataset.name }}"
+        state: present
+        extra_zfs_properties: "{{ item[0].value.zfs_dataset.properties | default({}) }}"
+      loop: "{{ enabled_services | subelements('value.zfs_dataset', skip_missing=True) | product(groups['cluster_nodes']) | list }}"
+      when: item[0].value.zfs_dataset is defined
+      loop_control:
+        label: "{{ item[0].key }} on {{ item[1] }}"
+      run_once: false
+
+    - name: Set ZFS dataset mountpoints
+      delegate_to: "{{ item[1] }}"
+      zfs:
+        name: "{{ item[0].value.zfs_dataset.name }}"
+        extra_zfs_properties:
+          mountpoint: "{{ item[0].value.zfs_dataset.mountpoint }}"
+      loop: "{{ enabled_services | subelements('value.zfs_dataset', skip_missing=True) | product(groups['cluster_nodes']) | list }}"
+      when: 
+        - item[0].value.zfs_dataset is defined
+        - item[0].value.zfs_dataset.mountpoint is defined
+      loop_control:
+        label: "{{ item[0].key }} mountpoint on {{ item[1] }}"
+      run_once: false
+
+    # =============================================================================
     # Data Directory Creation
     # =============================================================================
     - name: Create service data directories

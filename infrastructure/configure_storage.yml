@@ -62,12 +62,6 @@
       - "/dev/sda"
 
   tasks:
-    - name: Ensure /tmp directory has correct permissions
-      ansible.builtin.file:
-        path: /tmp
-        mode: '1777'
-        state: directory
-
     - name: Update package cache
       ansible.builtin.apt:
         update_cache: true
@@ -260,7 +254,7 @@
       ansible.builtin.file:
         path: "{{ item.mount_point }}"
         state: directory
-        mode: '0755'
+        mode: "{{ '1777' if item.mount_point == '/tmp' else '0755' }}"
       loop: "{{ fast_disk_partitions }}"
 
     - name: Mount fast disk partitions
@@ -271,6 +265,13 @@
         state: mounted
         opts: "defaults,noatime"
       loop: "{{ fast_disk_partitions }}"
+      when: fast_disk_info.rc == 0
+
+    - name: Ensure /tmp has correct permissions after mounting
+      ansible.builtin.file:
+        path: /tmp
+        mode: '1777'
+        state: directory
       when: fast_disk_info.rc == 0
 
     - name: Check if swap file already exists

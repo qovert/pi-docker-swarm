@@ -9,12 +9,6 @@
     docker_swarm_interface: "eth0"  # Adjust based on your network interface
 
   tasks:
-    - name: Ensure /tmp directory has correct permissions
-      ansible.builtin.file:
-        path: /tmp
-        mode: '1777'
-        state: directory
-
     - name: Update package cache
       ansible.builtin.apt:
         update_cache: true
