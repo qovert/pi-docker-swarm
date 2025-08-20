@@ -67,18 +67,18 @@ services:
     description: "Comic and manga server with multi-node data synchronization"
     zfs_dataset:
       name: "tank/komga"
-      mountpoint: "/data/komga"
+      mountpoint: "/tank/komga"
       properties:
         compression: "lz4"
         atime: "off"
         recordsize: "128K"  # Better for large files
     data_directories:
-      - "/data/komga"
-      - "/data/komga/config"
-      - "/data/komga/data"
-      - "/data/komga/library"
+      - "/tank/komga"
+      - "/tank/komga/config"
+      - "/tank/komga/data"
+      - "/tank/komga/library"
     special_permissions:
-      - path: "/data/komga"
+      - path: "/tank/komga"
         owner: "1000"
         group: "1000"
         recurse: true

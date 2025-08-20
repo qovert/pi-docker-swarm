@@ -122,6 +122,7 @@
       shell: "zfs list -t snapshot {{ item.value.zfs_dataset.name }}@initial 2>/dev/null"
       loop: "{{ services | dict2items }}"
       when:
+        - inventory_hostname == groups['cluster_nodes'][0]  # Only check on source node
         - item.value.enabled | default(false)
         - item.value.syncoid is defined
         - item.value.syncoid.enabled | default(false)
@@ -136,6 +137,7 @@
       shell: "zfs snapshot {{ item.value.zfs_dataset.name }}@initial"
       loop: "{{ services | dict2items }}"
       when:
+        - inventory_hostname == groups['cluster_nodes'][0]  # Only on source node
         - item.value.enabled | default(false)
         - item.value.syncoid is defined
         - item.value.syncoid.enabled | default(false)

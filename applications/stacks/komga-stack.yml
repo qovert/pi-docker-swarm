@@ -10,9 +10,9 @@ services:
       - KOMGA_CONFIGDIR=/config
       - TZ=UTC
     volumes:
-      - /data/komga/config:/config
-      - /data/komga/data:/data
-      - /data/komga/library:/library:ro
+      - /tank/komga/config:/config
+      - /tank/komga/data:/data
+      - /tank/komga/library:/library:ro
     networks:
       - cluster-network
     deploy:
