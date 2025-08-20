@@ -1,0 +1,91 @@
+---
+- name: Manage ZFS Datasets for Services
+  hosts: cluster_nodes
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Load services configuration
+      include_vars: "{{ playbook_dir }}/../services.yml"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Create ZFS datasets for services that require them
+      zfs:
+        name: "{{ item.value.zfs_dataset.name }}"
+        state: present
+      loop: "{{ services | dict2items }}"
+      when: 
+        - item.value.enabled | default(false)
+        - item.value.zfs_dataset is defined
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Set ZFS dataset properties
+      zfs:
+        name: "{{ item.value.zfs_dataset.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.value.zfs_dataset.properties }}"
+      loop: "{{ services | dict2items }}"
+      when:
+        - item.value.enabled | default(false)
+        - item.value.zfs_dataset is defined
+        - item.value.zfs_dataset.properties is defined
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Set ZFS dataset mountpoints
+      zfs:
+        name: "{{ item.value.zfs_dataset.name }}"
+        state: present
+        extra_zfs_properties:
+          mountpoint: "{{ item.value.zfs_dataset.mountpoint }}"
+      loop: "{{ services | dict2items }}"
+      when:
+        - item.value.enabled | default(false)
+        - item.value.zfs_dataset is defined
+        - item.value.zfs_dataset.mountpoint is defined
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Check if ZFS datasets are already mounted
+      command: "zfs get -H -o value mounted {{ item.value.zfs_dataset.name }}"
+      register: zfs_mount_status
+      loop: "{{ services | dict2items }}"
+      when:
+        - item.value.enabled | default(false)
+        - item.value.zfs_dataset is defined
+      loop_control:
+        label: "{{ item.key }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Mount ZFS datasets if not already mounted
+      command: "zfs mount {{ item.item.value.zfs_dataset.name }}"
+      loop: "{{ zfs_mount_status.results }}"
+      when:
+        - item is not skipped
+        - item.rc is defined
+        - item.rc == 0
+        - item.stdout.strip() == "no"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Display ZFS dataset status
+      command: "zfs list -o name,mountpoint,used,avail {{ item.value.zfs_dataset.name }}"
+      register: zfs_status
+      loop: "{{ services | dict2items }}"
+      when:
+        - item.value.enabled | default(false)
+        - item.value.zfs_dataset is defined
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Show ZFS dataset information
+      debug:
+        msg: "{{ zfs_status_item.stdout_lines }}"
+      loop: "{{ zfs_status.results }}"
+      when: zfs_status_item.stdout_lines is defined
+      loop_control:
+        loop_var: zfs_status_item
+        label: "ZFS dataset status"
