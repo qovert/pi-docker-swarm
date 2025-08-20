@@ -89,10 +89,6 @@ services:
         owner: "1000"
         group: "1000"
         recurse: true
-    health_checks:
-      - url: "http://{{ ansible_default_ipv4.address }}:8080/api/v1/actuator/health"
-        expected_status: 200
-        name: "Komga"
     dependencies: []
     tags: ["media", "web"]
     syncoid:
@@ -122,7 +118,7 @@ services:
 #       group: "1000"
 #       recurse: true
 #   health_checks:
-#     - url: "http://{{ ansible_default_ipv4.address }}:8080"
+#     - url: "http://{{ ansible_default_ipv4.address }}:8081"
 #       expected_status: 200
 #       name: "New Service"
 #   dependencies: ["other_service"]  # optional
