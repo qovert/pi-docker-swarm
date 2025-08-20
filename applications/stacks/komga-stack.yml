@@ -4,7 +4,7 @@ services:
   komga:
     image: gotson/komga:latest
     ports:
-      - "8081:8080"
+      - "8081:25600"
     environment:
       - JAVA_TOOL_OPTIONS=-Xmx1g
       - KOMGA_CONFIGDIR=/config
@@ -33,7 +33,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.komga.rule=Host(`komga.local`)"
-        - "traefik.http.services.komga.loadbalancer.server.port=8080"
+        - "traefik.http.services.komga.loadbalancer.server.port=25600"
         - "traefik.docker.network=cluster-network"
 
 networks:

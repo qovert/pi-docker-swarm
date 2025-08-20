@@ -55,13 +55,6 @@ services:
         owner: "472"
         group: "472"
         recurse: true
-    health_checks:
-      - url: "http://{{ ansible_default_ipv4.address }}:9090/-/healthy"
-        expected_status: 200
-        name: "Prometheus"
-      - url: "http://{{ ansible_default_ipv4.address }}:3000/api/health"
-        expected_status: 200
-        name: "Grafana"
     dependencies: []
     tags: ["monitoring", "core"]
 

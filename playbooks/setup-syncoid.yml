@@ -118,17 +118,32 @@
         - item.value.syncoid is defined
         - item.value.syncoid.enabled | default(false)
 
-    - name: Create initial snapshots for syncoid datasets
-      command: "zfs snapshot {{ item.value.zfs_dataset.name }}@initial-$(date +%Y%m%d-%H%M%S)"
+    - name: Check if initial snapshot exists for syncoid datasets
+      shell: "zfs list -t snapshot {{ item.value.zfs_dataset.name }}@initial 2>/dev/null"
       loop: "{{ services | dict2items }}"
       when:
         - item.value.enabled | default(false)
         - item.value.syncoid is defined
         - item.value.syncoid.enabled | default(false)
         - item.value.zfs_dataset is defined
-      ignore_errors: true  # Snapshot might already exist
+      register: initial_snapshot_check
+      failed_when: false  # Don't fail if snapshot doesn't exist
+      changed_when: false  # This is just a check
       loop_control:
         label: "{{ item.key }}"
+
+    - name: Create initial snapshots for syncoid datasets (only if missing)
+      shell: "zfs snapshot {{ item.value.zfs_dataset.name }}@initial"
+      loop: "{{ services | dict2items }}"
+      when:
+        - item.value.enabled | default(false)
+        - item.value.syncoid is defined
+        - item.value.syncoid.enabled | default(false)
+        - item.value.zfs_dataset is defined
+        - initial_snapshot_check.results[ansible_loop.index0].rc != 0  # Only if snapshot doesn't exist
+      loop_control:
+        label: "{{ item.key }}"
+        extended: true
 
     - name: Create cron jobs for syncoid
       cron:
