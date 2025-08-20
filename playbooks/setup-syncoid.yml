@@ -145,6 +145,48 @@
         label: "{{ item.key }}"
         extended: true
 
+    - name: Check for empty target datasets that block syncoid initial replication
+      shell: |
+        DATASET="{{ item.value.zfs_dataset.name }}"
+        if zfs list "$DATASET" >/dev/null 2>&1; then
+            SNAPSHOTS=$(zfs list -t snapshot -o name -H "$DATASET" 2>/dev/null | wc -l || echo "0")
+            USED_BYTES=$(zfs get -Hp -o value used "$DATASET" 2>/dev/null || echo "0")
+            # If dataset exists, has no snapshots, and uses < 64MB (67108864 bytes)
+            if [ "$SNAPSHOTS" -eq 0 ] && [ "$USED_BYTES" -lt 67108864 ]; then
+                echo "EMPTY_TARGET"
+            else
+                echo "HAS_DATA"
+            fi
+        else
+            echo "NOT_EXISTS"
+        fi
+      loop: "{{ services | dict2items }}"
+      register: target_dataset_status
+      when:
+        - inventory_hostname != groups['cluster_nodes'][0]  # Only on target nodes (not source)
+        - item.value.enabled | default(false)
+        - item.value.syncoid is defined
+        - item.value.syncoid.enabled | default(false)
+        - item.value.zfs_dataset is defined
+      changed_when: false
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Destroy empty target datasets to allow syncoid initial replication
+      shell: "zfs destroy {{ item.value.zfs_dataset.name }}"
+      loop: "{{ services | dict2items }}"
+      when:
+        - inventory_hostname != groups['cluster_nodes'][0]  # Only on target nodes
+        - item.value.enabled | default(false)
+        - item.value.syncoid is defined
+        - item.value.syncoid.enabled | default(false)
+        - item.value.zfs_dataset is defined
+        - target_dataset_status.results[ansible_loop.index0] is defined
+        - target_dataset_status.results[ansible_loop.index0].stdout == "EMPTY_TARGET"
+      loop_control:
+        label: "{{ item.key }}"
+        extended: true
+
     - name: Create cron jobs for syncoid
       cron:
         name: "syncoid-{{ item.key }}"
