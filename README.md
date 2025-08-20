@@ -59,13 +59,15 @@ services:
 
 ## 🏗️ Architecture
 
-**Hardware**: 3x Raspberry Pi 5 (8GB RAM) with 4x 512GB SATA SSDs + 1x 120GB NVMe per node
+**Hardware**: 
+- 3x Raspberry Pi 5 (8GB RAM) 
+- Radxa SATA Pi Hat with 4x 512GB SATA SSDs + 1x 120GB NVMe per node
 
 **Storage**: 
 - ZFS RAIDZ1 pool for Docker and application data
 - SSD for logs, cache, tmp, and swap
 
-**Platform**: Docker Swarm with full Infrastructure-as-Code management
+**Platform**: RaspOS with docker swarm
 
 ## ⚙️ Configuration
 
@@ -141,4 +143,3 @@ This system provides complete Docker Swarm lifecycle management through code:
 2. **Deploy**: `./service-manager.sh deploy-all`
 3. **Manage**: All through CLI and code
 
-Your cluster is now fully Infrastructure-as-Code! 🎉
